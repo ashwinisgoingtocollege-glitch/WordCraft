@@ -1,0 +1,117 @@
+#include <windows.h>
+#include "resource.h"
+
+1 RT_MANIFEST "app.manifest"
+IDI_WORDCRAFT ICON "wordcraft.ico"
+
+IDR_MAINMENU MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&New\tCtrl+N",              IDM_FILE_NEW
+        MENUITEM "&Open...\tCtrl+O",          IDM_FILE_OPEN
+        MENUITEM "&Save\tCtrl+S",             IDM_FILE_SAVE
+        MENUITEM "Save &As...\tCtrl+Shift+S", IDM_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM "Page Set&up...",             IDM_FILE_PAGE_SETUP
+        MENUITEM "&Print...\tCtrl+P",          IDM_FILE_PRINT
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit",                      IDM_FILE_EXIT
+    END
+    POPUP "&Edit"
+    BEGIN
+        MENUITEM "&Undo\tCtrl+Z",              IDM_EDIT_UNDO
+        MENUITEM "&Redo\tCtrl+Y",              IDM_EDIT_REDO
+        MENUITEM SEPARATOR
+        MENUITEM "Cu&t\tCtrl+X",               IDM_EDIT_CUT
+        MENUITEM "&Copy\tCtrl+C",              IDM_EDIT_COPY
+        MENUITEM "&Paste\tCtrl+V",             IDM_EDIT_PASTE
+        MENUITEM "&Delete\tDel",               IDM_EDIT_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM "Select &All\tCtrl+A",        IDM_EDIT_SELECT_ALL
+        MENUITEM SEPARATOR
+        MENUITEM "&Find...\tCtrl+F",           IDM_EDIT_FIND
+        MENUITEM "&Replace...\tCtrl+H",        IDM_EDIT_REPLACE
+    END
+    POPUP "F&ormat"
+    BEGIN
+        MENUITEM "&Font...\tCtrl+D",           IDM_FORMAT_FONT
+        MENUITEM "Text &Color...",             IDM_FORMAT_COLOR
+        MENUITEM SEPARATOR
+        MENUITEM "&Bold\tCtrl+B",              IDM_FORMAT_BOLD
+        MENUITEM "&Italic\tCtrl+I",            IDM_FORMAT_ITALIC
+        MENUITEM "&Underline\tCtrl+U",         IDM_FORMAT_UNDERLINE
+        MENUITEM "&Strikethrough",             IDM_FORMAT_STRIKE
+        MENUITEM SEPARATOR
+        POPUP "&Paragraph"
+        BEGIN
+            MENUITEM "Align &Left\tCtrl+L",    IDM_FORMAT_ALIGN_LEFT
+            MENUITEM "Align &Center\tCtrl+E",  IDM_FORMAT_ALIGN_CENTER
+            MENUITEM "Align &Right\tCtrl+R",   IDM_FORMAT_ALIGN_RIGHT
+            MENUITEM "&Justify\tCtrl+J",       IDM_FORMAT_ALIGN_JUSTIFY
+            MENUITEM SEPARATOR
+            MENUITEM "&Bullets",               IDM_FORMAT_BULLETS
+            MENUITEM "Increase &Indent",       IDM_FORMAT_INDENT_INCREASE
+            MENUITEM "Decrease I&ndent",       IDM_FORMAT_INDENT_DECREASE
+        END
+    END
+    POPUP "&Insert"
+    BEGIN
+        MENUITEM "&Date and Time\tF5",          IDM_INSERT_DATETIME
+    END
+    POPUP "&View"
+    BEGIN
+        MENUITEM "&Word Wrap",                  IDM_VIEW_WORD_WRAP
+        MENUITEM "&Status Bar",                 IDM_VIEW_STATUS_BAR
+        MENUITEM "&Dark Mode\tCtrl+Shift+D",    IDM_VIEW_DARK_MODE
+        MENUITEM SEPARATOR
+        POPUP "&Zoom"
+        BEGIN
+            MENUITEM "50%",                    IDM_VIEW_ZOOM_50
+            MENUITEM "75%",                    IDM_VIEW_ZOOM_75
+            MENUITEM "100%",                   IDM_VIEW_ZOOM_100
+            MENUITEM "125%",                   IDM_VIEW_ZOOM_125
+            MENUITEM "150%",                   IDM_VIEW_ZOOM_150
+            MENUITEM "200%",                   IDM_VIEW_ZOOM_200
+        END
+    END
+    POPUP "&Tools"
+    BEGIN
+        MENUITEM "Check &Spelling as You Type", IDM_TOOLS_SPELL_CHECK
+        MENUITEM "&Inline Autocomplete\tTab to accept", IDM_TOOLS_AUTOCOMPLETE
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About WordCraft",            IDM_HELP_ABOUT
+    END
+END
+
+IDR_ACCELERATORS ACCELERATORS
+BEGIN
+    "N", IDM_FILE_NEW,              VIRTKEY, CONTROL
+    "O", IDM_FILE_OPEN,             VIRTKEY, CONTROL
+    "S", IDM_FILE_SAVE,             VIRTKEY, CONTROL
+    "S", IDM_FILE_SAVE_AS,          VIRTKEY, CONTROL, SHIFT
+    "P", IDM_FILE_PRINT,            VIRTKEY, CONTROL
+    "Z", IDM_EDIT_UNDO,             VIRTKEY, CONTROL
+    "Y", IDM_EDIT_REDO,             VIRTKEY, CONTROL
+    "X", IDM_EDIT_CUT,              VIRTKEY, CONTROL
+    "C", IDM_EDIT_COPY,             VIRTKEY, CONTROL
+    "V", IDM_EDIT_PASTE,            VIRTKEY, CONTROL
+    VK_INSERT, IDM_EDIT_PASTE,       VIRTKEY, SHIFT
+    VK_INSERT, IDM_EDIT_COPY,        VIRTKEY, CONTROL
+    VK_DELETE, IDM_EDIT_CUT,         VIRTKEY, SHIFT
+    "A", IDM_EDIT_SELECT_ALL,       VIRTKEY, CONTROL
+    "F", IDM_EDIT_FIND,             VIRTKEY, CONTROL
+    "H", IDM_EDIT_REPLACE,          VIRTKEY, CONTROL
+    "D", IDM_FORMAT_FONT,           VIRTKEY, CONTROL
+    "D", IDM_VIEW_DARK_MODE,        VIRTKEY, CONTROL, SHIFT
+    "B", IDM_FORMAT_BOLD,           VIRTKEY, CONTROL
+    "I", IDM_FORMAT_ITALIC,         VIRTKEY, CONTROL
+    "U", IDM_FORMAT_UNDERLINE,      VIRTKEY, CONTROL
+    "L", IDM_FORMAT_ALIGN_LEFT,     VIRTKEY, CONTROL
+    "E", IDM_FORMAT_ALIGN_CENTER,   VIRTKEY, CONTROL
+    "R", IDM_FORMAT_ALIGN_RIGHT,    VIRTKEY, CONTROL
+    "J", IDM_FORMAT_ALIGN_JUSTIFY,  VIRTKEY, CONTROL
+    VK_F5, IDM_INSERT_DATETIME,       VIRTKEY
+END
