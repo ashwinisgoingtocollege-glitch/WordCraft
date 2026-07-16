@@ -1,0 +1,37 @@
+#ifndef WORDCRAFT_RENDER_EDITOR_H
+#define WORDCRAFT_RENDER_EDITOR_H
+
+#ifndef UNICODE
+#define UNICODE
+#endif
+#ifndef _UNICODE
+#define _UNICODE
+#endif
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#define WORDCRAFT_RENDER_EDITOR_CLASS L"WordCraftRenderEditor"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/*
+ * Registers the HWND shell which hosts one windowless RichEdit text-services
+ * object.  The shell exposes the normal RichEdit message surface while the
+ * renderer paints through Direct2D/DirectWrite when the platform supports it.
+ */
+BOOL render_editor_register(HINSTANCE instance, HMODULE richEditModule);
+
+/* Returns renderer diagnostics for the WCQ_RENDER_* query identifiers. */
+LRESULT render_editor_query_state(HWND editor, UINT query);
+
+/* True only for a live WordCraft renderer HWND. */
+BOOL render_editor_is_window(HWND editor);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

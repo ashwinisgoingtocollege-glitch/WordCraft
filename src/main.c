@@ -1,5 +1,7 @@
 #include "editor.h"
+#include "rendereditor.h"
 
+#include <ole2.h>
 #include <stdlib.h>
 
 static BOOL query_brand_colors_enabled(void)
@@ -148,6 +150,9 @@ static LRESULT CALLBACK format_bar_subclass_proc(HWND hwnd, UINT message,
 
     if (message == WM_NCDESTROY) {
         RemoveWindowSubclass(hwnd, format_bar_subclass_proc, 2);
+    } else if (app != NULL && message == WM_COMMAND &&
+               app->mainWindow != NULL) {
+        return SendMessageW(app->mainWindow, message, wParam, lParam);
     } else if (app != NULL && app->useBrandColors) {
         if (message == WM_ERASEBKGND) {
             RECT client;
@@ -226,6 +231,7 @@ static void app_apply_theme(AppState *app)
         RedrawWindow(app->formatBar, NULL, NULL,
                      RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
     }
+    ribbon_apply_theme(app);
     if (app->statusBar != NULL) {
         SendMessageW(app->statusBar, SB_SETBKCOLOR, 0,
                      app->palette.statusBackground);
@@ -238,25 +244,6 @@ static void app_apply_theme(AppState *app)
         RedrawWindow(app->mainWindow, NULL, NULL,
                      RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME);
     }
-}
-
-static int CALLBACK enumerate_fonts(const LOGFONTW *logFont, const TEXTMETRICW *metrics,
-                                    DWORD fontType, LPARAM data)
-{
-    HWND combo = (HWND)data;
-    LRESULT existing;
-    (void)metrics;
-    (void)fontType;
-
-    if (logFont->lfFaceName[0] == L'@') {
-        return 1;
-    }
-    existing = SendMessageW(combo, CB_FINDSTRINGEXACT, (WPARAM)-1,
-                            (LPARAM)logFont->lfFaceName);
-    if (existing == CB_ERR) {
-        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)logFont->lfFaceName);
-    }
-    return 1;
 }
 
 static BOOL CALLBACK apply_ui_font(HWND child, LPARAM data)
@@ -277,6 +264,7 @@ static LRESULT CALLBACK editor_subclass_proc(HWND hwnd, UINT message,
         result = DefSubclassProc(hwnd, message, wParam, lParam);
         if (app != NULL) {
             assist_paint_overlays(app, hwnd);
+            comments_paint_overlays(app, hwnd);
         }
         return result;
     }
@@ -417,8 +405,6 @@ BOOL app_create_children(AppState *app)
          BTNS_BUTTON | BTNS_AUTOSIZE | BTNS_SHOWTEXT, {0}, 0, (INT_PTR)L"Print"}
     };
     NONCLIENTMETRICSW metrics;
-    LOGFONTW fontQuery;
-    HDC dc;
     size_t index;
     LRESULT eventMask;
 
@@ -455,8 +441,9 @@ BOOL app_create_children(AppState *app)
         return FALSE;
     }
 
-    CreateWindowExW(0, WC_STATICW, L"Font:", WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE,
-                    0, 0, 0, 0, app->formatBar, NULL, app->instance, NULL);
+    app->fontLabel = CreateWindowExW(
+        0, WC_STATICW, L"Font:", WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE,
+        0, 0, 0, 0, app->formatBar, NULL, app->instance, NULL);
     app->fontCombo = CreateWindowExW(
         0, WC_COMBOBOXW, NULL,
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST |
@@ -484,7 +471,8 @@ BOOL app_create_children(AppState *app)
     app->alignJustifyButton = create_format_button(app, IDC_ALIGN_JUSTIFY, L"Justify");
     app->bulletsButton = create_format_button(app, IDC_BULLETS, L"Bullets");
 
-    if (app->fontCombo == NULL || app->sizeCombo == NULL ||
+    if (app->fontLabel == NULL || app->fontCombo == NULL ||
+        app->sizeCombo == NULL ||
         app->boldButton == NULL || app->italicButton == NULL ||
         app->underlineButton == NULL || app->strikeButton == NULL ||
         app->colorButton == NULL || app->alignLeftButton == NULL ||
@@ -501,17 +489,16 @@ BOOL app_create_children(AppState *app)
     if (app->uiFont == NULL) {
         app->uiFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
     }
+    if (!ribbon_create(app)) {
+        return FALSE;
+    }
     EnumChildWindows(app->formatBar, apply_ui_font, (LPARAM)app->uiFont);
     SendMessageW(app->toolbar, WM_SETFONT, (WPARAM)app->uiFont, TRUE);
 
-    ZeroMemory(&fontQuery, sizeof(fontQuery));
-    fontQuery.lfCharSet = DEFAULT_CHARSET;
-    dc = GetDC(app->mainWindow);
-    if (dc != NULL) {
-        EnumFontFamiliesExW(dc, &fontQuery, enumerate_fonts,
-                            (LPARAM)app->fontCombo, 0);
-        ReleaseDC(app->mainWindow, dc);
-    }
+    fonts_populate_combo(app->fontCombo, app->mainWindow);
+    SendMessageW(app->fontCombo, CB_SETMINVISIBLE, 20, 0);
+    SendMessageW(app->fontCombo, CB_SETDROPPEDWIDTH,
+                 (WPARAM)app_scale(app->mainWindow, 250), 0);
     for (index = 0; index < ARRAYSIZE(sizes); ++index) {
         SendMessageW(app->sizeCombo, CB_ADDSTRING, 0, (LPARAM)sizes[index]);
     }
@@ -530,7 +517,7 @@ BOOL app_create_children(AppState *app)
     }
 
     app->editor = CreateWindowExW(
-        0, MSFTEDIT_CLASS, NULL,
+        0, WORDCRAFT_RENDER_EDITOR_CLASS, NULL,
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS |
             ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_WANTRETURN |
             ES_NOHIDESEL | ES_SAVESEL,
@@ -550,6 +537,9 @@ BOOL app_create_children(AppState *app)
     SendMessageW(app->editor, EM_SETEVENTMASK, 0,
                  eventMask | ENM_CHANGE | ENM_SELCHANGE | ENM_UPDATE |
                      ENM_PAGECHANGE | ENM_SCROLL);
+    if (!text_engine_initialize(app)) {
+        return FALSE;
+    }
     pageview_mark_dirty(app);
     app_apply_theme(app);
 
@@ -566,26 +556,24 @@ void app_layout(AppState *app)
     RECT toolbarRect;
     RECT statusRect;
     int toolbarHeight;
-    int formatHeight;
+    int tabHeight;
+    int ribbonHeight;
     int statusHeight = 0;
     int width;
     int editorTop;
     int editorHeight;
-    int x;
-    int gap = app_scale(app->mainWindow, 4);
-    int controlHeight = app_scale(app->mainWindow, 26);
-    int buttonWidth = app_scale(app->mainWindow, 34);
-    int wideButton = app_scale(app->mainWindow, 57);
-    int alignmentY;
     BOOL compact;
 
-    if (app->toolbar == NULL || app->pageView == NULL || app->editor == NULL) {
+    if (app->toolbar == NULL || app->ribbonTabs == NULL ||
+        app->formatBar == NULL || app->pageView == NULL ||
+        app->editor == NULL) {
         return;
     }
     GetClientRect(app->mainWindow, &client);
     width = client.right - client.left;
     compact = width < app_scale(app->mainWindow, 850);
-    formatHeight = app_scale(app->mainWindow, compact ? 72 : 38);
+    tabHeight = app_scale(app->mainWindow, 32);
+    ribbonHeight = app_scale(app->mainWindow, 100);
 
     SendMessageW(app->toolbar, TB_AUTOSIZE, 0, 0);
     GetWindowRect(app->toolbar, &toolbarRect);
@@ -594,46 +582,10 @@ void app_layout(AppState *app)
         toolbarHeight = app_scale(app->mainWindow, 30);
     }
     MoveWindow(app->toolbar, 0, 0, width, toolbarHeight, TRUE);
-    MoveWindow(app->formatBar, 0, toolbarHeight, width, formatHeight, TRUE);
-
-    x = app_scale(app->mainWindow, 8);
-    MoveWindow(GetWindow(app->formatBar, GW_CHILD), x, app_scale(app->mainWindow, 6),
-               app_scale(app->mainWindow, 34), controlHeight, TRUE);
-    x += app_scale(app->mainWindow, 38);
-    MoveWindow(app->fontCombo, x, app_scale(app->mainWindow, 5),
-               app_scale(app->mainWindow, 174), app_scale(app->mainWindow, 260), TRUE);
-    x += app_scale(app->mainWindow, 174) + gap;
-    MoveWindow(app->sizeCombo, x, app_scale(app->mainWindow, 5),
-               app_scale(app->mainWindow, 58), app_scale(app->mainWindow, 260), TRUE);
-    x += app_scale(app->mainWindow, 58) + app_scale(app->mainWindow, 8);
-
-    MoveWindow(app->boldButton, x, app_scale(app->mainWindow, 5), buttonWidth, controlHeight, TRUE);
-    x += buttonWidth;
-    MoveWindow(app->italicButton, x, app_scale(app->mainWindow, 5), buttonWidth, controlHeight, TRUE);
-    x += buttonWidth;
-    MoveWindow(app->underlineButton, x, app_scale(app->mainWindow, 5), buttonWidth, controlHeight, TRUE);
-    x += buttonWidth;
-    MoveWindow(app->strikeButton, x, app_scale(app->mainWindow, 5), buttonWidth, controlHeight, TRUE);
-    x += buttonWidth + gap;
-    MoveWindow(app->colorButton, x, app_scale(app->mainWindow, 5), wideButton, controlHeight, TRUE);
-    x += wideButton;
-    if (compact) {
-        x = app_scale(app->mainWindow, 8);
-        alignmentY = app_scale(app->mainWindow, 39);
-    } else {
-        x += app_scale(app->mainWindow, 8);
-        alignmentY = app_scale(app->mainWindow, 5);
-    }
-
-    MoveWindow(app->alignLeftButton, x, alignmentY, wideButton, controlHeight, TRUE);
-    x += wideButton;
-    MoveWindow(app->alignCenterButton, x, alignmentY, wideButton, controlHeight, TRUE);
-    x += wideButton;
-    MoveWindow(app->alignRightButton, x, alignmentY, wideButton, controlHeight, TRUE);
-    x += wideButton;
-    MoveWindow(app->alignJustifyButton, x, alignmentY, wideButton, controlHeight, TRUE);
-    x += wideButton + gap;
-    MoveWindow(app->bulletsButton, x, alignmentY, wideButton, controlHeight, TRUE);
+    MoveWindow(app->ribbonTabs, 0, toolbarHeight, width, tabHeight, TRUE);
+    MoveWindow(app->formatBar, 0, toolbarHeight + tabHeight,
+               width, ribbonHeight, TRUE);
+    ribbon_layout(app, width, ribbonHeight, compact);
 
     if (app->showStatusBar) {
         ShowWindow(app->statusBar, SW_SHOW);
@@ -645,7 +597,7 @@ void app_layout(AppState *app)
         ShowWindow(app->statusBar, SW_HIDE);
     }
 
-    editorTop = toolbarHeight + formatHeight;
+    editorTop = toolbarHeight + tabHeight + ribbonHeight;
     editorHeight = client.bottom - editorTop - statusHeight;
     if (editorHeight < 0) {
         editorHeight = 0;
@@ -777,51 +729,85 @@ void app_update_command_ui(AppState *app)
     BOOL hasSelection;
     BOOL canUndo;
     BOOL canRedo;
+    BOOL canPaste;
+    BOOL hasComments;
 
-    if (menu == NULL || app->editor == NULL) {
+    if (app->editor == NULL) {
         return;
     }
     SendMessageW(app->editor, EM_EXGETSEL, 0, (LPARAM)&selection);
     hasSelection = selection.cpMin != selection.cpMax;
     canUndo = (BOOL)SendMessageW(app->editor, EM_CANUNDO, 0, 0);
     canRedo = (BOOL)SendMessageW(app->editor, EM_CANREDO, 0, 0);
+    canPaste = (BOOL)SendMessageW(app->editor, EM_CANPASTE, 0, 0);
+    hasComments = comments_count(app) > 0;
 
-    set_menu_enabled(menu, IDM_EDIT_UNDO, canUndo);
-    set_menu_enabled(menu, IDM_EDIT_REDO, canRedo);
-    set_menu_enabled(menu, IDM_EDIT_CUT, hasSelection);
-    set_menu_enabled(menu, IDM_EDIT_COPY, hasSelection);
-    set_menu_enabled(menu, IDM_EDIT_DELETE, hasSelection);
-    set_menu_enabled(menu, IDM_EDIT_PASTE,
-                     (BOOL)SendMessageW(app->editor, EM_CANPASTE, 0, 0));
+    if (menu != NULL) {
+        set_menu_enabled(menu, IDM_EDIT_UNDO, canUndo);
+        set_menu_enabled(menu, IDM_EDIT_REDO, canRedo);
+        set_menu_enabled(menu, IDM_EDIT_CUT, hasSelection);
+        set_menu_enabled(menu, IDM_EDIT_COPY, hasSelection);
+        set_menu_enabled(menu, IDM_EDIT_DELETE, hasSelection);
+        set_menu_enabled(menu, IDM_EDIT_PASTE, canPaste);
+        set_menu_enabled(menu, IDM_REVIEW_PREVIOUS_COMMENT, hasComments);
+        set_menu_enabled(menu, IDM_REVIEW_NEXT_COMMENT, hasComments);
+        set_menu_enabled(menu, IDM_REVIEW_DELETE_COMMENT, hasComments);
+
+        CheckMenuItem(menu, IDM_VIEW_WORD_WRAP,
+                      MF_BYCOMMAND |
+                          (app->wordWrap ? MF_CHECKED : MF_UNCHECKED));
+        set_menu_enabled(menu, IDM_VIEW_WORD_WRAP, FALSE);
+        CheckMenuItem(menu, IDM_VIEW_STATUS_BAR,
+                      MF_BYCOMMAND |
+                          (app->showStatusBar ? MF_CHECKED : MF_UNCHECKED));
+        CheckMenuItem(menu, IDM_VIEW_DARK_MODE,
+                      MF_BYCOMMAND |
+                          (app->darkMode ? MF_CHECKED : MF_UNCHECKED));
+        CheckMenuItem(menu, IDM_TOOLS_SPELL_CHECK,
+                      MF_BYCOMMAND |
+                          (app->spellCheckEnabled ? MF_CHECKED : MF_UNCHECKED));
+        CheckMenuItem(menu, IDM_TOOLS_AUTOCOMPLETE,
+                      MF_BYCOMMAND |
+                          (app->autoCompleteEnabled ? MF_CHECKED : MF_UNCHECKED));
+        CheckMenuRadioItem(
+            menu, IDM_VIEW_ZOOM_50, IDM_VIEW_ZOOM_200,
+            (UINT)(IDM_VIEW_ZOOM_100 + (app->zoomPercent - 100)),
+            MF_BYCOMMAND);
+    }
 
     SendMessageW(app->toolbar, TB_ENABLEBUTTON, IDM_EDIT_UNDO, MAKELONG(canUndo, 0));
     SendMessageW(app->toolbar, TB_ENABLEBUTTON, IDM_EDIT_REDO, MAKELONG(canRedo, 0));
     SendMessageW(app->toolbar, TB_ENABLEBUTTON, IDM_EDIT_CUT, MAKELONG(hasSelection, 0));
     SendMessageW(app->toolbar, TB_ENABLEBUTTON, IDM_EDIT_COPY, MAKELONG(hasSelection, 0));
     SendMessageW(app->toolbar, TB_ENABLEBUTTON, IDM_EDIT_PASTE,
-                 MAKELONG((BOOL)SendMessageW(app->editor, EM_CANPASTE, 0, 0), 0));
+                 MAKELONG(canPaste, 0));
 
-    CheckMenuItem(menu, IDM_VIEW_WORD_WRAP,
-                  MF_BYCOMMAND | (app->wordWrap ? MF_CHECKED : MF_UNCHECKED));
-    set_menu_enabled(menu, IDM_VIEW_WORD_WRAP, FALSE);
-    CheckMenuItem(menu, IDM_VIEW_STATUS_BAR,
-                  MF_BYCOMMAND | (app->showStatusBar ? MF_CHECKED : MF_UNCHECKED));
-    CheckMenuItem(menu, IDM_VIEW_DARK_MODE,
-                  MF_BYCOMMAND | (app->darkMode ? MF_CHECKED : MF_UNCHECKED));
-    CheckMenuItem(menu, IDM_TOOLS_SPELL_CHECK,
-                  MF_BYCOMMAND |
-                      (app->spellCheckEnabled ? MF_CHECKED : MF_UNCHECKED));
-    CheckMenuItem(menu, IDM_TOOLS_AUTOCOMPLETE,
-                  MF_BYCOMMAND |
-                      (app->autoCompleteEnabled ? MF_CHECKED : MF_UNCHECKED));
-    CheckMenuRadioItem(menu, IDM_VIEW_ZOOM_50, IDM_VIEW_ZOOM_200,
-                       (UINT)(IDM_VIEW_ZOOM_100 + (app->zoomPercent - 100)), MF_BYCOMMAND);
+    ribbon_update_command_ui(app, hasSelection, canUndo, canRedo, canPaste);
     format_sync_controls(app);
 }
 
 static void handle_font_combo(AppState *app)
 {
-    WCHAR fontName[LF_FACESIZE];
+    WCHAR fontName[LF_FACESIZE + 32];
+    WCHAR status[128];
+    WCHAR *unavailable;
+
+    if (!fonts_combo_selection_is_installed(app->fontCombo)) {
+        if (GetWindowTextW(app->fontCombo, fontName,
+                           ARRAYSIZE(fontName)) > 0) {
+            unavailable = wcsstr(fontName, L"  (not installed)");
+            if (unavailable != NULL) {
+                *unavailable = L'\0';
+            }
+            StringCchPrintfW(status, ARRAYSIZE(status),
+                             L"%s is not installed in Windows.", fontName);
+            app_set_status_message(app, status);
+        }
+        MessageBeep(MB_ICONWARNING);
+        format_sync_controls(app);
+        SetFocus(app->editor);
+        return;
+    }
     if (GetWindowTextW(app->fontCombo, fontName, ARRAYSIZE(fontName)) > 0) {
         format_set_font_name(app, fontName);
         SetFocus(app->editor);
@@ -852,6 +838,8 @@ static void handle_size_combo(AppState *app)
 
 static void handle_command(AppState *app, UINT command)
 {
+    WCHAR commentText[COMMENT_TEXT_CAPACITY + 1];
+
     switch (command) {
     case IDM_FILE_NEW:
         document_new(app, TRUE);
@@ -993,6 +981,29 @@ static void handle_command(AppState *app, UINT command)
     case IDM_TOOLS_AUTOCOMPLETE:
         assist_set_auto_complete(app, !app->autoCompleteEnabled);
         break;
+    case IDM_REVIEW_ADD_COMMENT:
+        if (!ribbon_get_comment_text(app, commentText,
+                                     ARRAYSIZE(commentText)) ||
+            commentText[0] == L'\0') {
+            ribbon_focus_comment_editor(app);
+            app_set_status_message(
+                app, L"Type a comment, then choose Add Comment.");
+        } else if (comments_add(app, commentText)) {
+            ribbon_clear_comment_text(app);
+        }
+        break;
+    case IDM_REVIEW_PREVIOUS_COMMENT:
+        comments_previous(app);
+        break;
+    case IDM_REVIEW_NEXT_COMMENT:
+        comments_next(app);
+        break;
+    case IDM_REVIEW_DELETE_COMMENT:
+        comments_delete_active(app);
+        break;
+    case IDM_RIBBON_FOCUS:
+        ribbon_focus(app);
+        break;
     case IDM_HELP_ABOUT:
         dialogs_show_about(app);
         break;
@@ -1020,6 +1031,11 @@ LRESULT CALLBACK main_window_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
         assist_handle_result(app, lParam);
         return 0;
     }
+    if (app != NULL && message == WCM_RENDERER_CHANGED) {
+        pageview_mark_dirty(app);
+        text_engine_note_layout_change(app);
+        return 0;
+    }
     if (app != NULL && message == WCM_QUERY_STATE) {
         if ((UINT)wParam == WCQ_DARK_MODE) {
             return app->darkMode;
@@ -1027,6 +1043,26 @@ LRESULT CALLBACK main_window_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
         if ((UINT)wParam >= WCQ_SPELL_ERROR_COUNT &&
             (UINT)wParam <= WCQ_SPELL_RESULT_READY) {
             return assist_query_state(app, (UINT)wParam);
+        }
+        if ((UINT)wParam >= WCQ_SCROLL_ANIMATING &&
+            (UINT)wParam <= WCQ_SCROLL_FRAME_INTERVAL_MS) {
+            return pageview_query_state(app, (UINT)wParam);
+        }
+        if ((UINT)wParam >= WCQ_RIBBON_TAB_COUNT &&
+            (UINT)wParam <= WCQ_RIBBON_FOCUS_AREA) {
+            return ribbon_query_state(app, (UINT)wParam, lParam);
+        }
+        if ((UINT)wParam >= WCQ_COMMENT_COUNT &&
+            (UINT)wParam <= WCQ_COMMENT_TEXT_HASH) {
+            return comments_query_state(app, (UINT)wParam, lParam);
+        }
+        if ((UINT)wParam >= WCQ_TEXT_ENGINE_ENABLED &&
+            (UINT)wParam <= WCQ_TEXT_ENGINE_LAYOUT_GENERATION) {
+            return text_engine_query_state(app, (UINT)wParam);
+        }
+        if ((UINT)wParam >= WCQ_RENDER_ENGINE_WINDOWLESS &&
+            (UINT)wParam <= WCQ_RENDER_ENGINE_LAST_SELECTION_PAGE) {
+            return render_editor_query_state(app->editor, (UINT)wParam);
         }
         if (app->paginationDirty || app->pageCount < 1) {
             pageview_paginate(app);
@@ -1077,6 +1113,10 @@ LRESULT CALLBACK main_window_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
         break;
     case WM_DRAWITEM:
         if (app != NULL && lParam != 0 &&
+            ribbon_draw_item(app, (const DRAWITEMSTRUCT *)lParam)) {
+            return TRUE;
+        }
+        if (app != NULL && lParam != 0 &&
             ((DRAWITEMSTRUCT *)lParam)->CtlID == IDC_STATUS) {
             DRAWITEMSTRUCT *draw = (DRAWITEMSTRUCT *)lParam;
             int part = (int)draw->itemData;
@@ -1109,13 +1149,17 @@ LRESULT CALLBACK main_window_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
         }
         break;
     case WM_CREATE:
-        if (!app_create_children(app) || !document_new(app, FALSE) ||
-            !assist_initialize(app)) {
+        if (!app_create_children(app) || !comments_initialize(app) ||
+            !document_new(app, FALSE) || !assist_initialize(app)) {
             app_show_error(hwnd, L"WordCraft could not create its editor controls.",
                            GetLastError());
+            comments_shutdown(app);
+            text_engine_shutdown(app);
+            ribbon_free(app);
             return -1;
         }
         assist_document_changed(app);
+        app_update_command_ui(app);
         SetFocus(app->editor);
         return 0;
     case WM_SIZE:
@@ -1140,6 +1184,14 @@ LRESULT CALLBACK main_window_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
             app_apply_theme(app);
         }
         break;
+    case WM_FONTCHANGE:
+        if (app != NULL && app->fontCombo != NULL) {
+            fonts_populate_combo(app->fontCombo, app->mainWindow);
+            format_sync_controls(app);
+            text_engine_note_layout_change(app);
+            pageview_mark_dirty(app);
+        }
+        return 0;
     case WM_GETMINMAXINFO:
         ((MINMAXINFO *)lParam)->ptMinTrackSize.x = app_scale(hwnd, 560);
         ((MINMAXINFO *)lParam)->ptMinTrackSize.y = app_scale(hwnd, 420);
@@ -1157,6 +1209,7 @@ LRESULT CALLBACK main_window_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
             if (!app->loading) {
                 document_mark_modified(app, TRUE);
                 app->wordCountDirty = TRUE;
+                text_engine_note_layout_change(app);
                 pageview_mark_dirty(app);
                 assist_schedule(app);
             }
@@ -1174,7 +1227,13 @@ LRESULT CALLBACK main_window_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
         handle_command(app, LOWORD(wParam));
         return 0;
     case WM_NOTIFY:
-        if (app != NULL && ((NMHDR *)lParam)->hwndFrom == app->toolbar &&
+        if (app == NULL || lParam == 0) {
+            break;
+        }
+        if (ribbon_handle_notify(app, (const NMHDR *)lParam)) {
+            return 0;
+        }
+        if (((NMHDR *)lParam)->hwndFrom == app->toolbar &&
             ((NMHDR *)lParam)->code == NM_CUSTOMDRAW &&
             app->useBrandColors) {
             NMTBCUSTOMDRAW *draw = (NMTBCUSTOMDRAW *)lParam;
@@ -1197,7 +1256,7 @@ LRESULT CALLBACK main_window_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
                 return TBCDRF_USECDCOLORS | TBCDRF_HILITEHOTTRACK;
             }
         }
-        if (app != NULL && ((NMHDR *)lParam)->hwndFrom == app->editor &&
+        if (((NMHDR *)lParam)->hwndFrom == app->editor &&
             ((NMHDR *)lParam)->code == EN_SELCHANGE) {
             format_sync_controls(app);
             pageview_sync_to_caret(app, TRUE);
@@ -1205,9 +1264,12 @@ LRESULT CALLBACK main_window_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
                 assist_selection_changed(app);
             }
             app_update_status(app, FALSE);
+            if (!app->loading) {
+                comments_selection_changed(app);
+            }
             return 0;
         }
-        if (app != NULL && ((NMHDR *)lParam)->hwndFrom == app->editor &&
+        if (((NMHDR *)lParam)->hwndFrom == app->editor &&
             ((NMHDR *)lParam)->code == EN_PAGECHANGE) {
             pageview_sync_to_caret(app, FALSE);
             app_update_status(app, FALSE);
@@ -1222,8 +1284,12 @@ LRESULT CALLBACK main_window_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
     case WM_TIMER:
         if (app != NULL) {
             if (wParam == STATUS_TIMER_ID) {
-                KillTimer(hwnd, STATUS_TIMER_ID);
-                app_update_status(app, app->wordCountDirty);
+                if (pageview_is_scrolling(app)) {
+                    SetTimer(hwnd, STATUS_TIMER_ID, 100, NULL);
+                } else {
+                    KillTimer(hwnd, STATUS_TIMER_ID);
+                    app_update_status(app, app->wordCountDirty);
+                }
             } else if (wParam == SPELL_TIMER_ID ||
                        wParam == COMPLETION_TIMER_ID) {
                 assist_handle_timer(app, (UINT_PTR)wParam);
@@ -1244,7 +1310,11 @@ LRESULT CALLBACK main_window_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
         return app != NULL ? document_prompt_save(app) : TRUE;
     case WM_CLOSE:
         if (app == NULL || document_prompt_save(app)) {
-            assist_request_stop(app);
+            if (app != NULL) {
+                assist_request_stop(app);
+                comments_shutdown(app);
+                text_engine_shutdown(app);
+            }
             DestroyWindow(hwnd);
         }
         return 0;
@@ -1269,17 +1339,26 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance,
     MSG message;
     HICON largeIcon;
     HICON smallIcon;
+    HRESULT oleStatus;
     int exitCode = 1;
     int getMessageResult;
     (void)previousInstance;
     (void)commandLine;
 
     SetProcessDPIAware();
+    oleStatus = OleInitialize(NULL);
+    if (FAILED(oleStatus)) {
+        MessageBoxW(NULL, L"Windows OLE services could not be initialized.",
+                    APP_NAME, MB_OK | MB_ICONERROR);
+        return 1;
+    }
     controls.dwSize = sizeof(controls);
-    controls.dwICC = ICC_WIN95_CLASSES | ICC_BAR_CLASSES | ICC_STANDARD_CLASSES;
+    controls.dwICC = ICC_WIN95_CLASSES | ICC_BAR_CLASSES |
+                     ICC_STANDARD_CLASSES | ICC_TAB_CLASSES;
     if (!InitCommonControlsEx(&controls)) {
         MessageBoxW(NULL, L"Windows common controls could not be initialized.",
                     APP_NAME, MB_OK | MB_ICONERROR);
+        OleUninitialize();
         return 1;
     }
 
@@ -1287,6 +1366,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance,
     if (app == NULL) {
         MessageBoxW(NULL, L"Not enough memory to start WordCraft.",
                     APP_NAME, MB_OK | MB_ICONERROR);
+        OleUninitialize();
         return 1;
     }
     app->instance = instance;
@@ -1313,6 +1393,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance,
         app_show_error(NULL, L"The Windows Rich Edit component (Msftedit.dll) could not be loaded.",
                        GetLastError());
         HeapFree(GetProcessHeap(), 0, app);
+        OleUninitialize();
+        return 1;
+    }
+    if (!render_editor_register(instance, app->richEditModule)) {
+        app_show_error(NULL,
+                       L"WordCraft could not initialize its text renderer.",
+                       GetLastError());
+        FreeLibrary(app->richEditModule);
+        HeapFree(GetProcessHeap(), 0, app);
+        OleUninitialize();
         return 1;
     }
 
@@ -1343,6 +1433,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance,
         app_show_error(NULL, L"WordCraft could not register its window class.", GetLastError());
         FreeLibrary(app->richEditModule);
         HeapFree(GetProcessHeap(), 0, app);
+        OleUninitialize();
         return 1;
     }
 
@@ -1353,8 +1444,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance,
         NULL, NULL, instance, app);
     if (window == NULL) {
         app_show_error(NULL, L"WordCraft could not create its main window.", GetLastError());
+        if (app->uiFont != NULL &&
+            app->uiFont != GetStockObject(DEFAULT_GUI_FONT)) {
+            DeleteObject(app->uiFont);
+        }
         FreeLibrary(app->richEditModule);
         HeapFree(GetProcessHeap(), 0, app);
+        OleUninitialize();
         return 1;
     }
 
@@ -1393,6 +1489,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance,
             assist_clear_completion(app);
             continue;
         }
+        if (ribbon_handle_keyboard(app, &message)) {
+            continue;
+        }
         if (accelerators == NULL ||
             !((message.hwnd == window || IsChild(window, message.hwnd)) &&
               !(message.hwnd == app->sizeCombo ||
@@ -1407,6 +1506,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance,
     }
 
     assist_shutdown(app);
+    comments_shutdown(app);
+    text_engine_shutdown(app);
+    ribbon_free(app);
     if (app->uiFont != NULL && app->uiFont != GetStockObject(DEFAULT_GUI_FONT)) {
         DeleteObject(app->uiFont);
     }
@@ -1419,5 +1521,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance,
     pageview_free(app);
     FreeLibrary(app->richEditModule);
     HeapFree(GetProcessHeap(), 0, app);
+    OleUninitialize();
     return exitCode;
 }

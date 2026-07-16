@@ -80,6 +80,13 @@ BEGIN
         MENUITEM "Check &Spelling as You Type", IDM_TOOLS_SPELL_CHECK
         MENUITEM "&Inline Autocomplete\tTab to accept", IDM_TOOLS_AUTOCOMPLETE
     END
+    POPUP "&Review"
+    BEGIN
+        MENUITEM "&New Comment\tCtrl+Alt+M",     IDM_REVIEW_ADD_COMMENT
+        MENUITEM "&Previous Comment",           IDM_REVIEW_PREVIOUS_COMMENT
+        MENUITEM "Ne&xt Comment",               IDM_REVIEW_NEXT_COMMENT
+        MENUITEM "&Delete Comment",             IDM_REVIEW_DELETE_COMMENT
+    END
     POPUP "&Help"
     BEGIN
         MENUITEM "&About WordCraft",            IDM_HELP_ABOUT
@@ -113,5 +120,7 @@ BEGIN
     "E", IDM_FORMAT_ALIGN_CENTER,   VIRTKEY, CONTROL
     "R", IDM_FORMAT_ALIGN_RIGHT,    VIRTKEY, CONTROL
     "J", IDM_FORMAT_ALIGN_JUSTIFY,  VIRTKEY, CONTROL
+    "M", IDM_REVIEW_ADD_COMMENT,     VIRTKEY, CONTROL, ALT
+    VK_F6, IDM_RIBBON_FOCUS,          VIRTKEY
     VK_F5, IDM_INSERT_DATETIME,       VIRTKEY
 END

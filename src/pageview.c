@@ -16,6 +16,13 @@
 #define PAGEVIEW_DEFAULT_HEIGHT 11000
 #define PAGEVIEW_MIN_PRINTABLE_TWIPS 144
 #define PAGEVIEW_PREVIEW_CACHE_CAPACITY 16
+#define PAGEVIEW_SCROLL_TIMER_ID 1
+#define PAGEVIEW_SCROLL_FRAME_MS 16
+#define PAGEVIEW_SCROLL_TIMER_INTERVAL_MS 15
+#define PAGEVIEW_SCROLL_TIME_CONSTANT_MS 28
+#define PAGEVIEW_PREVIEW_TIMER_ID 2
+#define PAGEVIEW_PREVIEW_WARM_DELAY_MS 40
+#define PAGEVIEW_MAX_SCROLL_PIXELS_PER_SECOND 2400
 
 static const IID wordcraftPageviewIidTextDocument = {
     0x8CC497C0, 0xA1DF, 0x11CE,
@@ -32,7 +39,22 @@ typedef struct PageViewState {
     AppState *app;
     RECT pageRect;
     LONG visiblePage;
-    int wheelRemainder;
+    LONGLONG verticalWheelRemainder;
+    LONGLONG horizontalWheelRemainder;
+    LARGE_INTEGER performanceFrequency;
+    LARGE_INTEGER lastScrollFrame;
+    int scrollTargetY;
+    int scrollPixelsPerSecond;
+    int shadowOffset;
+    int shadowInflate;
+    int previewInvalidatePadding;
+    LONG scrollFrameCount;
+    int lastScrollDirection;
+    BOOL scrollAnimating;
+    BOOL thumbTracking;
+    BOOL previewRenderingDeferred;
+    BOOL previewWarmScheduled;
+    BOOL editorOnPage;
     BOOL layingOut;
     BOOL switchingPage;
     BOOL paintingPages;
@@ -63,6 +85,10 @@ static LRESULT CALLBACK pageview_window_proc(HWND hwnd, UINT message,
 static LRESULT CALLBACK pageview_editor_subclass_proc(
     HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam,
     UINT_PTR subclassId, DWORD_PTR referenceData);
+static void pageview_cancel_scroll_animation(PageViewState *state,
+                                             HWND hwnd);
+static void pageview_schedule_preview_warm(PageViewState *state,
+                                           HWND hwnd);
 
 static PageViewState *pageview_get_state(HWND hwnd)
 {
@@ -301,12 +327,6 @@ static BOOL pageview_set_scroll_position(HWND hwnd, int bar, int position)
     return info.nPos != oldPosition;
 }
 
-static BOOL pageview_scroll_by(HWND hwnd, int bar, int distance)
-{
-    int position = pageview_scroll_position(hwnd, bar);
-    return pageview_set_scroll_position(hwnd, bar, position + distance);
-}
-
 static void pageview_set_scroll_extent(HWND hwnd, int bar, int canvas,
                                        int viewport)
 {
@@ -328,6 +348,230 @@ static void pageview_set_scroll_extent(HWND hwnd, int bar, int canvas,
     info.nPage = (UINT)viewport;
     info.nPos = oldPosition;
     SetScrollInfo(hwnd, bar, &info, TRUE);
+}
+
+static void pageview_cancel_scroll_animation(PageViewState *state,
+                                             HWND hwnd)
+{
+    BOOL wasAnimating;
+
+    if (state == NULL) {
+        return;
+    }
+    wasAnimating = state->scrollAnimating;
+    if (hwnd != NULL) {
+        KillTimer(hwnd, PAGEVIEW_SCROLL_TIMER_ID);
+        state->scrollTargetY = pageview_scroll_position(hwnd, SB_VERT);
+    }
+    state->scrollAnimating = FALSE;
+    state->thumbTracking = FALSE;
+    state->previewRenderingDeferred = wasAnimating;
+    state->verticalWheelRemainder = 0;
+    state->horizontalWheelRemainder = 0;
+    state->lastScrollFrame.QuadPart = 0;
+    if (wasAnimating && hwnd != NULL) {
+        InvalidateRect(hwnd, NULL, FALSE);
+        pageview_schedule_preview_warm(state, hwnd);
+    }
+}
+
+static void pageview_position_editor_for_viewport(PageViewState *state,
+                                                  HWND hwnd)
+{
+    AppState *app;
+    RECT client;
+    RECT activePage;
+    RECT intersection;
+    BOOL visible;
+    int parkY;
+
+    if (state == NULL || state->app == NULL ||
+        state->app->editor == NULL) {
+        return;
+    }
+    app = state->app;
+    GetClientRect(hwnd, &client);
+    visible = pageview_page_rect(state, state->visiblePage, &activePage) &&
+              IntersectRect(&intersection, &activePage, &client);
+    if (visible) {
+        SetWindowPos(app->editor, NULL, activePage.left, activePage.top,
+                     0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        if (!state->editorOnPage) {
+            InvalidateRect(app->editor, NULL, FALSE);
+        }
+        state->editorOnPage = TRUE;
+        state->pageRect = activePage;
+        return;
+    }
+    if (state->editorOnPage) {
+        parkY = client.top - state->pageHeight - app_scale(hwnd, 4);
+        SetWindowPos(app->editor, NULL, client.left, parkY, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    state->editorOnPage = FALSE;
+    if (pageview_page_rect(state, state->visiblePage, &activePage)) {
+        state->pageRect = activePage;
+    } else {
+        SetRectEmpty(&state->pageRect);
+    }
+}
+
+static BOOL pageview_apply_scroll_position(PageViewState *state, HWND hwnd,
+                                           int bar, int position)
+{
+    RECT client;
+    int oldHorizontal;
+    int oldVertical;
+    int newHorizontal;
+    int newVertical;
+    int dx;
+    int dy;
+
+    if (state == NULL || state->app == NULL) {
+        return FALSE;
+    }
+    oldHorizontal = pageview_scroll_position(hwnd, SB_HORZ);
+    oldVertical = pageview_scroll_position(hwnd, SB_VERT);
+    if (!pageview_set_scroll_position(hwnd, bar, position)) {
+        return FALSE;
+    }
+    newHorizontal = pageview_scroll_position(hwnd, SB_HORZ);
+    newVertical = pageview_scroll_position(hwnd, SB_VERT);
+    dx = oldHorizontal - newHorizontal;
+    dy = oldVertical - newVertical;
+    if (dx == 0 && dy == 0) {
+        return FALSE;
+    }
+    state->pageLeft += dx;
+    state->firstPageTop += dy;
+    GetClientRect(hwnd, &client);
+    if (abs(dx) >= client.right - client.left ||
+        abs(dy) >= client.bottom - client.top ||
+        ScrollWindowEx(hwnd, dx, dy, NULL, NULL, NULL, NULL,
+                       SW_INVALIDATE) == ERROR) {
+        InvalidateRect(hwnd, NULL, FALSE);
+    }
+    pageview_position_editor_for_viewport(state, hwnd);
+    return TRUE;
+}
+
+static void pageview_finish_scroll_animation(PageViewState *state,
+                                             HWND hwnd)
+{
+    if (state == NULL) {
+        return;
+    }
+    KillTimer(hwnd, PAGEVIEW_SCROLL_TIMER_ID);
+    state->scrollAnimating = FALSE;
+    state->lastScrollFrame.QuadPart = 0;
+    pageview_schedule_preview_warm(state, hwnd);
+}
+
+static void pageview_scroll_animation_frame(PageViewState *state,
+                                            HWND hwnd, BOOL forceFrame)
+{
+    LARGE_INTEGER now;
+    LONGLONG elapsedTicks;
+    LONGLONG elapsedMilliseconds;
+    LONGLONG step;
+    LONGLONG maximumStep;
+    int current;
+    int difference;
+    int next;
+
+    if (state == NULL || !state->scrollAnimating) {
+        return;
+    }
+    QueryPerformanceCounter(&now);
+    if (state->performanceFrequency.QuadPart <= 0) {
+        QueryPerformanceFrequency(&state->performanceFrequency);
+    }
+    if (forceFrame || state->lastScrollFrame.QuadPart == 0 ||
+        state->performanceFrequency.QuadPart <= 0) {
+        elapsedMilliseconds = PAGEVIEW_SCROLL_FRAME_MS;
+    } else {
+        elapsedTicks = now.QuadPart - state->lastScrollFrame.QuadPart;
+        elapsedMilliseconds = elapsedTicks > 0
+                                  ? elapsedTicks * 1000 /
+                                        state->performanceFrequency.QuadPart
+                                  : 0;
+        if (elapsedMilliseconds < PAGEVIEW_SCROLL_FRAME_MS - 2) {
+            return;
+        }
+        if (elapsedMilliseconds > 50) {
+            elapsedMilliseconds = 50;
+        }
+    }
+    state->lastScrollFrame = now;
+    current = pageview_scroll_position(hwnd, SB_VERT);
+    difference = state->scrollTargetY - current;
+    if (difference == 0) {
+        pageview_finish_scroll_animation(state, hwnd);
+        return;
+    }
+    if (difference >= -2 && difference <= 2) {
+        next = state->scrollTargetY;
+    } else {
+        step = (LONGLONG)difference * elapsedMilliseconds /
+               (PAGEVIEW_SCROLL_TIME_CONSTANT_MS + elapsedMilliseconds);
+        if (step == 0) {
+            step = difference > 0 ? 1 : -1;
+        }
+        maximumStep = ((LONGLONG)max(1, state->scrollPixelsPerSecond) *
+                       elapsedMilliseconds + 999) / 1000;
+        if (step > maximumStep) {
+            step = maximumStep;
+        } else if (step < -maximumStep) {
+            step = -maximumStep;
+        }
+        next = pageview_saturate_int64((LONGLONG)current + step);
+    }
+    if ((difference > 0 && next > state->scrollTargetY) ||
+        (difference < 0 && next < state->scrollTargetY)) {
+        next = state->scrollTargetY;
+    }
+    if (pageview_apply_scroll_position(state, hwnd, SB_VERT, next)) {
+        if (state->scrollFrameCount < LONG_MAX) {
+            ++state->scrollFrameCount;
+        }
+    }
+    if (pageview_scroll_position(hwnd, SB_VERT) == state->scrollTargetY) {
+        pageview_finish_scroll_animation(state, hwnd);
+    }
+}
+
+static void pageview_set_smooth_scroll_target(PageViewState *state,
+                                              HWND hwnd, int target)
+{
+    int current;
+    int maximum;
+    BOOL starting;
+
+    if (state == NULL) {
+        return;
+    }
+    current = pageview_scroll_position(hwnd, SB_VERT);
+    maximum = pageview_scroll_maximum(hwnd, SB_VERT);
+    target = pageview_clamp_int(target, 0, maximum);
+    if (target == current && !state->scrollAnimating) {
+        state->scrollTargetY = current;
+        return;
+    }
+    starting = !state->scrollAnimating;
+    state->scrollTargetY = target;
+    state->lastScrollDirection = target < current ? -1 : 1;
+    state->previewRenderingDeferred = TRUE;
+    state->scrollAnimating = TRUE;
+    pageview_schedule_preview_warm(state, hwnd);
+    if (starting &&
+        SetTimer(hwnd, PAGEVIEW_SCROLL_TIMER_ID,
+                 PAGEVIEW_SCROLL_TIMER_INTERVAL_MS, NULL) == 0) {
+        pageview_apply_scroll_position(state, hwnd, SB_VERT, target);
+        state->scrollAnimating = FALSE;
+        state->previewRenderingDeferred = FALSE;
+        return;
+    }
+    pageview_scroll_animation_frame(state, hwnd, starting);
 }
 
 static void pageview_fill_rect(HDC dc, const RECT *rect, COLORREF color)
@@ -480,6 +724,26 @@ static HENHMETAFILE pageview_render_preview(PageViewState *state,
     return metafile;
 }
 
+static HENHMETAFILE pageview_lookup_preview(PageViewState *state,
+                                            LONG page, BOOL touch)
+{
+    SIZE_T index;
+
+    if (state == NULL || page < 1) {
+        return NULL;
+    }
+    for (index = 0; index < ARRAYSIZE(state->previews); ++index) {
+        if (state->previews[index].metafile != NULL &&
+            state->previews[index].page == page) {
+            if (touch) {
+                state->previews[index].lastUse = ++state->previewClock;
+            }
+            return state->previews[index].metafile;
+        }
+    }
+    return NULL;
+}
+
 static HENHMETAFILE pageview_cached_preview(PageViewState *state,
                                             HDC referenceDc, LONG page)
 {
@@ -488,12 +752,11 @@ static HENHMETAFILE pageview_cached_preview(PageViewState *state,
     ULONGLONG oldestUse = (ULONGLONG)-1;
     HENHMETAFILE metafile;
 
+    metafile = pageview_lookup_preview(state, page, TRUE);
+    if (metafile != NULL) {
+        return metafile;
+    }
     for (index = 0; index < ARRAYSIZE(state->previews); ++index) {
-        if (state->previews[index].metafile != NULL &&
-            state->previews[index].page == page) {
-            state->previews[index].lastUse = ++state->previewClock;
-            return state->previews[index].metafile;
-        }
         if (state->previews[index].metafile == NULL) {
             replacement = index;
             break;
@@ -516,60 +779,79 @@ static HENHMETAFILE pageview_cached_preview(PageViewState *state,
     return metafile;
 }
 
-static void pageview_paint(PageViewState *state, HWND hwnd, HDC dc)
+static void pageview_paint(PageViewState *state, HWND hwnd, HDC dc,
+                           const RECT *dirtyRect)
 {
     RECT client;
+    RECT dirty;
     COLORREF workspace;
     COLORREF paper;
     COLORREF borderColor;
     COLORREF shadowColor;
     int shadowOffset;
+    int shadowInflate;
     HBRUSH borderBrush;
     LONG firstPage;
     LONG lastPage;
     LONG pageNumber;
 
     GetClientRect(hwnd, &client);
+    if (dirtyRect == NULL || IsRectEmpty(dirtyRect) ||
+        !IntersectRect(&dirty, &client, dirtyRect)) {
+        dirty = client;
+    }
     if (state == NULL || state->app == NULL) {
-        pageview_fill_rect(dc, &client, GetSysColor(COLOR_APPWORKSPACE));
+        pageview_fill_rect(dc, &dirty, GetSysColor(COLOR_APPWORKSPACE));
         return;
     }
     workspace = state->app->palette.workspaceBackground;
     paper = state->app->palette.pageBackground;
     borderColor = state->app->palette.pageBorder;
     shadowColor = state->app->palette.pageShadow;
-    pageview_fill_rect(dc, &client, workspace);
+    pageview_fill_rect(dc, &dirty, workspace);
     pageview_visible_page_range(state, hwnd, &firstPage, &lastPage, NULL);
     if (firstPage == 0 || lastPage == 0) {
         return;
     }
-    shadowOffset = app_scale(hwnd, 6);
+    shadowOffset = state->shadowOffset > 0
+                       ? state->shadowOffset : app_scale(hwnd, 6);
+    shadowInflate = state->shadowInflate > 0
+                        ? state->shadowInflate : app_scale(hwnd, 2);
     borderBrush = CreateSolidBrush(borderColor);
     state->paintingPages = TRUE;
     for (pageNumber = firstPage; pageNumber <= lastPage; ++pageNumber) {
         RECT page;
         RECT shadow;
         RECT border;
+        RECT bounds;
+        RECT intersection;
 
         if (!pageview_page_rect(state, pageNumber, &page)) {
             continue;
         }
         shadow = page;
         OffsetRect(&shadow, shadowOffset, shadowOffset);
-        InflateRect(&shadow, app_scale(hwnd, 2), app_scale(hwnd, 2));
+        InflateRect(&shadow, shadowInflate, shadowInflate);
+        border = page;
+        InflateRect(&border, 1, 1);
+        UnionRect(&bounds, &shadow, &border);
+        if (!IntersectRect(&intersection, &bounds, &dirty)) {
+            continue;
+        }
         pageview_fill_rect(dc, &shadow, shadowColor);
         pageview_fill_rect(dc, &page, paper);
         if (pageNumber != state->visiblePage &&
             !state->app->paginationDirty) {
-            HENHMETAFILE preview = pageview_cached_preview(
-                state, dc, pageNumber);
+            HENHMETAFILE preview = state->previewRenderingDeferred
+                                        ? pageview_lookup_preview(
+                                              state, pageNumber, TRUE)
+                                        : pageview_cached_preview(
+                                              state, dc, pageNumber);
             if (preview != NULL) {
                 PlayEnhMetaFile(dc, preview, &page);
             }
         }
         if (borderBrush != NULL) {
-            border = page;
-            InflateRect(&border, 1, 1);
             FrameRect(dc, &border, borderBrush);
         }
     }
@@ -577,6 +859,139 @@ static void pageview_paint(PageViewState *state, HWND hwnd, HDC dc)
     if (borderBrush != NULL) {
         DeleteObject(borderBrush);
     }
+    if (!state->app->paginationDirty) {
+        pageview_schedule_preview_warm(state, hwnd);
+    }
+}
+
+static BOOL pageview_preview_needs_warm(PageViewState *state,
+                                        LONG page)
+{
+    return state != NULL && state->app != NULL && page >= 1 &&
+           page <= state->app->pageCount && page != state->visiblePage &&
+           pageview_lookup_preview(state, page, FALSE) == NULL;
+}
+
+static LONG pageview_next_preview_to_warm(PageViewState *state, HWND hwnd)
+{
+    LONG firstPage = 0;
+    LONG lastPage = 0;
+    LONG warmFirst;
+    LONG warmLast;
+    LONG visibleCount;
+    LONG remainingSlots;
+    LONG page;
+    LONG candidates[3];
+    SIZE_T index;
+
+    if (state == NULL || state->app == NULL ||
+        state->app->paginationDirty || state->app->pageEnds == NULL) {
+        return 0;
+    }
+    pageview_visible_page_range(state, hwnd, &firstPage, &lastPage, NULL);
+    if (firstPage <= 0 || lastPage < firstPage) {
+        return 0;
+    }
+    warmFirst = firstPage;
+    warmLast = lastPage;
+    visibleCount = lastPage - firstPage + 1;
+    if (visibleCount > PAGEVIEW_PREVIEW_CACHE_CAPACITY) {
+        if (state->lastScrollDirection < 0) {
+            warmLast = firstPage + PAGEVIEW_PREVIEW_CACHE_CAPACITY - 1;
+        } else {
+            warmFirst = lastPage - PAGEVIEW_PREVIEW_CACHE_CAPACITY + 1;
+        }
+        visibleCount = PAGEVIEW_PREVIEW_CACHE_CAPACITY;
+    }
+    for (page = warmFirst; page <= warmLast; ++page) {
+        if (pageview_preview_needs_warm(state, page)) {
+            return page;
+        }
+    }
+    if (state->lastScrollDirection < 0) {
+        candidates[0] = warmFirst - 1;
+        candidates[1] = warmFirst - 2;
+        candidates[2] = warmLast + 1;
+    } else {
+        candidates[0] = warmLast + 1;
+        candidates[1] = warmLast + 2;
+        candidates[2] = warmFirst - 1;
+    }
+    remainingSlots = PAGEVIEW_PREVIEW_CACHE_CAPACITY - visibleCount;
+    for (index = 0; index < ARRAYSIZE(candidates) &&
+                    (LONG)index < remainingSlots; ++index) {
+        if (pageview_preview_needs_warm(state, candidates[index])) {
+            return candidates[index];
+        }
+    }
+    return 0;
+}
+
+static void pageview_schedule_preview_warm(PageViewState *state, HWND hwnd)
+{
+    if (state == NULL || hwnd == NULL || state->previewWarmScheduled ||
+        state->app == NULL ||
+        state->app->paginationDirty) {
+        return;
+    }
+    if (SetTimer(hwnd, PAGEVIEW_PREVIEW_TIMER_ID,
+                 PAGEVIEW_PREVIEW_WARM_DELAY_MS, NULL) != 0) {
+        state->previewWarmScheduled = TRUE;
+    }
+}
+
+static void pageview_warm_one_preview(PageViewState *state, HWND hwnd)
+{
+    LONG page;
+    HDC dc;
+    HENHMETAFILE preview;
+    RECT pageRect;
+    BOOL wasDeferred;
+
+    if (state == NULL) {
+        return;
+    }
+    KillTimer(hwnd, PAGEVIEW_PREVIEW_TIMER_ID);
+    state->previewWarmScheduled = FALSE;
+    wasDeferred = state->previewRenderingDeferred;
+    if (state->app == NULL || state->app->paginationDirty) {
+        return;
+    }
+    page = pageview_next_preview_to_warm(state, hwnd);
+    if (page == 0) {
+        if (!state->scrollAnimating && !state->thumbTracking) {
+            state->previewRenderingDeferred = FALSE;
+            if (wasDeferred) {
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+        }
+        return;
+    }
+    dc = GetDC(hwnd);
+    if (dc == NULL) {
+        state->previewRenderingDeferred = FALSE;
+        if (wasDeferred) {
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
+        return;
+    }
+    preview = pageview_cached_preview(state, dc, page);
+    ReleaseDC(hwnd, dc);
+    if (preview == NULL) {
+        state->previewRenderingDeferred = FALSE;
+        if (wasDeferred) {
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
+        return;
+    }
+    if (pageview_page_rect(state, page, &pageRect)) {
+        int padding = state->previewInvalidatePadding > 0
+                          ? state->previewInvalidatePadding
+                          : app_scale(hwnd, 8);
+        InflateRect(&pageRect, padding, padding);
+        InvalidateRect(hwnd, &pageRect, FALSE);
+    }
+    pageview_schedule_preview_warm(state, hwnd);
 }
 
 static BOOL pageview_register_class(HINSTANCE instance)
@@ -830,7 +1245,8 @@ static void pageview_ensure_caret_visible_in_host(AppState *app, LONG character)
     }
 }
 
-static BOOL pageview_handle_scroll(HWND hwnd, int bar, UINT command)
+static BOOL pageview_handle_scroll(PageViewState *state, HWND hwnd,
+                                   int bar, UINT command)
 {
     RECT client;
     int position;
@@ -880,7 +1296,19 @@ static BOOL pageview_handle_scroll(HWND hwnd, int bar, UINT command)
     default:
         return FALSE;
     }
-    return pageview_set_scroll_position(hwnd, bar, position);
+    if (bar == SB_VERT && position !=
+                              pageview_scroll_position(hwnd, SB_VERT)) {
+        state->lastScrollDirection =
+            position < pageview_scroll_position(hwnd, SB_VERT) ? -1 : 1;
+    }
+    {
+        BOOL changed = pageview_apply_scroll_position(state, hwnd, bar,
+                                                       position);
+        if (bar == SB_VERT) {
+            state->scrollTargetY = pageview_scroll_position(hwnd, SB_VERT);
+        }
+        return changed;
+    }
 }
 
 static LRESULT pageview_handle_mouse_wheel(PageViewState *state, HWND hwnd,
@@ -895,36 +1323,50 @@ static LRESULT pageview_handle_mouse_wheel(PageViewState *state, HWND hwnd,
     }
     delta = GET_WHEEL_DELTA_WPARAM(wParam);
     if (horizontal) {
-        int distance = app_scale(hwnd, 48);
-        pageview_scroll_by(hwnd, SB_HORZ,
-                           delta > 0 ? distance : -distance);
-        pageview_layout(state->app);
+        LONGLONG numerator = state->horizontalWheelRemainder +
+                             (LONGLONG)delta * app_scale(hwnd, 48);
+        int distance = pageview_saturate_int64(numerator / WHEEL_DELTA);
+        state->horizontalWheelRemainder = numerator % WHEEL_DELTA;
+        if (distance != 0) {
+            state->previewRenderingDeferred = TRUE;
+            pageview_apply_scroll_position(
+                state, hwnd, SB_HORZ,
+                pageview_saturate_int64(
+                    (LONGLONG)pageview_scroll_position(hwnd, SB_HORZ) +
+                    distance));
+            pageview_schedule_preview_warm(state, hwnd);
+        }
         return 0;
     }
-    state->wheelRemainder += delta;
     SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
     if (lines == WHEEL_PAGESCROLL) {
         RECT client;
         GetClientRect(hwnd, &client);
-        step = client.bottom - client.top;
+        step = max(1, client.bottom - client.top - app_scale(hwnd, 32));
     } else {
         if (lines == 0) {
-            lines = 1;
+            return 0;
         }
-        step = app_scale(hwnd, 16) * (int)lines;
+        step = pageview_saturate_int64(
+            (LONGLONG)app_scale(hwnd, 16) * lines);
     }
     if (step < 1) {
         step = 1;
     }
-    while (state->wheelRemainder >= WHEEL_DELTA) {
-        pageview_scroll_by(hwnd, SB_VERT, -step);
-        state->wheelRemainder -= WHEEL_DELTA;
+    {
+        LONGLONG numerator = state->verticalWheelRemainder -
+                             (LONGLONG)delta * step;
+        int distance = pageview_saturate_int64(numerator / WHEEL_DELTA);
+        int base = state->scrollAnimating
+                       ? state->scrollTargetY
+                       : pageview_scroll_position(hwnd, SB_VERT);
+        state->verticalWheelRemainder = numerator % WHEEL_DELTA;
+        if (distance != 0) {
+            pageview_set_smooth_scroll_target(
+                state, hwnd,
+                pageview_saturate_int64((LONGLONG)base + distance));
+        }
     }
-    while (state->wheelRemainder <= -WHEEL_DELTA) {
-        pageview_scroll_by(hwnd, SB_VERT, step);
-        state->wheelRemainder += WHEEL_DELTA;
-    }
-    pageview_layout(state->app);
     return 0;
 }
 
@@ -934,6 +1376,36 @@ static LRESULT CALLBACK pageview_editor_subclass_proc(
 {
     AppState *app = (AppState *)referenceData;
     (void)subclassId;
+
+    if ((message == EM_SETSEL || message == EM_EXSETSEL) &&
+        app != NULL && app->pageView != NULL &&
+        !app->paginationDirty && app->pageEnds != NULL) {
+        LONG character = -1;
+        if (message == EM_SETSEL) {
+            character = (LONG)wParam;
+        } else if (lParam != 0) {
+            const CHARRANGE *range = (const CHARRANGE *)lParam;
+            character = range->cpMin;
+        }
+        if (character >= 0) {
+            LONG page = pageview_page_from_character(app, character);
+            PageViewState *state = pageview_get_state(app->pageView);
+            if (state != NULL && page >= 1 &&
+                page <= app->pageCount && page != state->visiblePage) {
+                /*
+                 * A windowless RichEdit does not automatically unpark its
+                 * VM_PAGE host when a selection targets another page. Move
+                 * both the service page and its clipped HWND into view before
+                 * forwarding either selection message.
+                 */
+                pageview_navigate_display(app, page);
+                pageview_apply_scroll_position(
+                    state, app->pageView, SB_VERT,
+                    pageview_saturate_int64(
+                        (LONGLONG)(page - 1) * state->pagePitch));
+            }
+        }
+    }
 
     if (message == WM_MOUSEWHEEL && app != NULL && app->pageView != NULL) {
         return SendMessageW(app->pageView, message, wParam, lParam);
@@ -1018,6 +1490,10 @@ static LRESULT CALLBACK pageview_window_proc(HWND hwnd, UINT message,
         state->visiblePage = state->app != NULL && state->app->currentPage > 0
                                  ? state->app->currentPage
                                  : 1;
+        state->lastScrollDirection = 1;
+        state->scrollPixelsPerSecond =
+            PAGEVIEW_MAX_SCROLL_PIXELS_PER_SECOND;
+        QueryPerformanceFrequency(&state->performanceFrequency);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)state);
         app = state->app;
     }
@@ -1029,7 +1505,7 @@ static LRESULT CALLBACK pageview_window_proc(HWND hwnd, UINT message,
         if (state != NULL) {
             PAINTSTRUCT paint;
             HDC dc = BeginPaint(hwnd, &paint);
-            pageview_paint(state, hwnd, dc);
+            pageview_paint(state, hwnd, dc, &paint.rcPaint);
             EndPaint(hwnd, &paint);
             return 0;
         }
@@ -1044,16 +1520,42 @@ static LRESULT CALLBACK pageview_window_proc(HWND hwnd, UINT message,
         if (state != NULL && app != NULL) {
             int bar = message == WM_HSCROLL ? SB_HORZ : SB_VERT;
             UINT command = LOWORD(wParam);
-            if (pageview_handle_scroll(hwnd, bar, command)) {
-                pageview_layout(app);
+            pageview_cancel_scroll_animation(state, hwnd);
+            if (command == SB_ENDSCROLL) {
+                state->thumbTracking = FALSE;
+                state->previewRenderingDeferred = TRUE;
+                pageview_schedule_preview_warm(state, hwnd);
+                return 0;
+            }
+            state->thumbTracking = command == SB_THUMBTRACK;
+            state->previewRenderingDeferred = TRUE;
+            pageview_handle_scroll(state, hwnd, bar, command);
+            if (command != SB_THUMBTRACK) {
+                pageview_schedule_preview_warm(state, hwnd);
             }
             return 0;
+        }
+        break;
+    case WM_CAPTURECHANGED:
+        if (state != NULL && state->thumbTracking) {
+            state->thumbTracking = FALSE;
+            pageview_schedule_preview_warm(state, hwnd);
         }
         break;
     case WM_MOUSEWHEEL:
         return pageview_handle_mouse_wheel(state, hwnd, wParam, FALSE);
     case WM_MOUSEHWHEEL:
         return pageview_handle_mouse_wheel(state, hwnd, wParam, TRUE);
+    case WM_TIMER:
+        if (state != NULL && wParam == PAGEVIEW_SCROLL_TIMER_ID) {
+            pageview_scroll_animation_frame(state, hwnd, FALSE);
+            return 0;
+        }
+        if (state != NULL && wParam == PAGEVIEW_PREVIEW_TIMER_ID) {
+            pageview_warm_one_preview(state, hwnd);
+            return 0;
+        }
+        break;
     case WM_SETFOCUS:
         if (app != NULL && app->editor != NULL) {
             SetFocus(app->editor);
@@ -1072,6 +1574,8 @@ static LRESULT CALLBACK pageview_window_proc(HWND hwnd, UINT message,
         break;
     case WM_NCDESTROY:
         if (state != NULL) {
+            KillTimer(hwnd, PAGEVIEW_SCROLL_TIMER_ID);
+            KillTimer(hwnd, PAGEVIEW_PREVIEW_TIMER_ID);
             pageview_clear_preview_cache(state);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             HeapFree(GetProcessHeap(), 0, state);
@@ -1170,6 +1674,7 @@ void pageview_layout(AppState *app)
     if (state == NULL || state->layingOut || state->paintingPages) {
         return;
     }
+    pageview_cancel_scroll_animation(state, app->pageView);
     state->layingOut = TRUE;
     GetClientRect(app->pageView, &client);
     viewportWidth = max(1, client.right - client.left);
@@ -1227,6 +1732,7 @@ void pageview_layout(AppState *app)
                                viewportHeight);
     horizontalPosition = pageview_scroll_position(app->pageView, SB_HORZ);
     verticalPosition = pageview_scroll_position(app->pageView, SB_VERT);
+    state->scrollTargetY = verticalPosition;
     if (canvasWidth <= viewportWidth) {
         pageLeft = client.left +
                    (viewportWidth - pageWidth) / 2;
@@ -1248,6 +1754,11 @@ void pageview_layout(AppState *app)
     state->firstPageTop = firstPageTop;
     state->canvasWidth = canvasWidth;
     state->canvasHeight = canvasHeight;
+    state->scrollPixelsPerSecond = max(
+        1, MulDiv(PAGEVIEW_MAX_SCROLL_PIXELS_PER_SECOND, dpiY, 96));
+    state->shadowOffset = max(1, MulDiv(6, dpiY, 96));
+    state->shadowInflate = max(1, MulDiv(2, dpiY, 96));
+    state->previewInvalidatePadding = max(1, MulDiv(8, dpiY, 96));
 
     actualPage = app->editor != NULL
                      ? (LONG)SendMessageW(app->editor, EM_GETPAGE, 0, 0) + 1
@@ -1271,10 +1782,12 @@ void pageview_layout(AppState *app)
         if (activePageVisible) {
             MoveWindow(app->editor, activePageRect.left,
                        activePageRect.top, pageWidth, pageHeight, TRUE);
+            state->editorOnPage = TRUE;
         } else {
             MoveWindow(app->editor, client.left,
                        client.top - pageHeight - app_scale(app->pageView, 4),
                        pageWidth, pageHeight, TRUE);
+            state->editorOnPage = FALSE;
         }
         ShowWindow(app->editor, SW_SHOWNOACTIVATE);
 
@@ -1346,6 +1859,7 @@ void pageview_layout(AppState *app)
         }
         InvalidateRect(app->editor, NULL, TRUE);
     }
+    state->previewRenderingDeferred = FALSE;
     InvalidateRect(app->pageView, NULL, TRUE);
     state->layingOut = FALSE;
 }
@@ -1358,6 +1872,10 @@ void pageview_apply_theme(AppState *app)
         return;
     }
     state = app->pageView != NULL ? pageview_get_state(app->pageView) : NULL;
+    if (state != NULL) {
+        pageview_cancel_scroll_animation(state, app->pageView);
+        state->previewRenderingDeferred = FALSE;
+    }
     pageview_clear_preview_cache(state);
     if (app->editor != NULL) {
         SendMessageW(app->editor, EM_SETBKGNDCOLOR, 0,
@@ -1539,6 +2057,9 @@ void pageview_sync_to_caret(AppState *app, BOOL ensureVisible)
     if (state != NULL && state->switchingPage) {
         return;
     }
+    if (state != NULL && ensureVisible) {
+        pageview_cancel_scroll_animation(state, app->pageView);
+    }
     if ((app->pageCount <= 0 || app->pageEnds == NULL) &&
         !app->pageLayoutBusy) {
         pageview_paginate(app);
@@ -1609,6 +2130,18 @@ LRESULT pageview_query_state(AppState *app, UINT query)
     if (state == NULL) {
         return 0;
     }
+    switch (query) {
+    case WCQ_SCROLL_ANIMATING:
+        return state->scrollAnimating;
+    case WCQ_SCROLL_TARGET_Y:
+        return state->scrollTargetY;
+    case WCQ_SCROLL_FRAME_COUNT:
+        return state->scrollFrameCount;
+    case WCQ_SCROLL_FRAME_INTERVAL_MS:
+        return PAGEVIEW_SCROLL_FRAME_MS;
+    default:
+        break;
+    }
     pageview_visible_page_range(state, app->pageView, &firstPage,
                                 &lastPage, &fullyVisible);
     switch (query) {
@@ -1629,6 +2162,18 @@ LRESULT pageview_query_state(AppState *app, UINT query)
     default:
         return 0;
     }
+}
+
+BOOL pageview_is_scrolling(AppState *app)
+{
+    PageViewState *state;
+
+    if (app == NULL || app->pageView == NULL) {
+        return FALSE;
+    }
+    state = pageview_get_state(app->pageView);
+    return state != NULL &&
+           (state->scrollAnimating || state->thumbTracking);
 }
 
 void pageview_free(AppState *app)

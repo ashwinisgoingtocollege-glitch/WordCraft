@@ -1388,11 +1388,11 @@ static HFONT assist_create_completion_font(AppState *app)
                  (LPARAM)&format);
     ZeroMemory(&font, sizeof(font));
     height = (format.dwMask & CFM_SIZE) != 0 && format.yHeight > 0
-                 ? format.yHeight : 220;
+                 ? format.yHeight : WORDCRAFT_DEFAULT_FONT_SIZE_TWIPS;
     font.lfHeight = -MulDiv(height, dpi * app->zoomPercent,
                            1440 * 100);
     if (font.lfHeight == 0) {
-        font.lfHeight = -app_scale(app->editor, 15);
+        font.lfHeight = -app_scale(app->editor, 16);
     }
     font.lfWeight = (format.dwEffects & CFE_BOLD) != 0 ?
                         FW_BOLD : FW_NORMAL;
@@ -1405,7 +1405,7 @@ static HFONT assist_create_completion_font(AppState *app)
                        format.szFaceName);
     } else {
         StringCchCopyW(font.lfFaceName, ARRAYSIZE(font.lfFaceName),
-                       L"Segoe UI");
+                       WORDCRAFT_DEFAULT_FONT_FACE);
     }
     return CreateFontIndirectW(&font);
 }

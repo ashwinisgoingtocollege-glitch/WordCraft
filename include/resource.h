@@ -52,7 +52,13 @@
 #define IDM_TOOLS_SPELL_CHECK           1701
 #define IDM_TOOLS_AUTOCOMPLETE          1702
 
+#define IDM_REVIEW_ADD_COMMENT          1801
+#define IDM_REVIEW_PREVIOUS_COMMENT     1802
+#define IDM_REVIEW_NEXT_COMMENT         1803
+#define IDM_REVIEW_DELETE_COMMENT       1804
+
 #define IDM_HELP_ABOUT                  1901
+#define IDM_RIBBON_FOCUS                1950
 
 #define IDC_EDITOR                      2001
 #define IDC_TOOLBAR                     2002
@@ -71,5 +77,8 @@
 #define IDC_ALIGN_JUSTIFY               2017
 #define IDC_BULLETS                     2018
 #define IDC_TEXT_COLOR                  2019
+#define IDC_RIBBON_TABS                 2020
+#define IDC_COMMENT_EDIT                2021
+#define IDC_COMMENT_SUMMARY             2022
 
 #endif

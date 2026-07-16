@@ -83,24 +83,6 @@ static DWORD CALLBACK file_read_callback(DWORD_PTR cookie, LPBYTE buffer,
     return 0;
 }
 
-static DWORD CALLBACK file_write_callback(DWORD_PTR cookie, LPBYTE buffer,
-                                          LONG requested, LONG *transferred)
-{
-    FileStreamContext *context = (FileStreamContext *)cookie;
-    DWORD bytesWritten = 0;
-    if (!WriteFile(context->file, buffer, (DWORD)requested, &bytesWritten, NULL)) {
-        context->error = GetLastError();
-        *transferred = 0;
-        return 1;
-    }
-    *transferred = (LONG)bytesWritten;
-    if (bytesWritten != (DWORD)requested) {
-        context->error = ERROR_WRITE_FAULT;
-        return 1;
-    }
-    return 0;
-}
-
 static DWORD CALLBACK memory_read_callback(DWORD_PTR cookie, LPBYTE buffer,
                                            LONG requested, LONG *transferred)
 {
@@ -663,33 +645,37 @@ static BOOL write_text_file(AppState *app, const WCHAR *path, DWORD *error)
 static BOOL write_rtf_file(AppState *app, const WCHAR *path, DWORD *error)
 {
     HANDLE file;
-    FileStreamContext context;
-    EDITSTREAM stream;
+    MemoryStreamContext rtf;
+    BYTE *withComments = NULL;
+    SIZE_T withCommentsSize = 0;
     BOOL success = FALSE;
+
+    if (!capture_rtf(app->editor, &rtf, error)) {
+        return FALSE;
+    }
+    if (!comments_embed_rtf(app, rtf.data, rtf.size, &withComments,
+                            &withCommentsSize, error)) {
+        free_memory_stream(&rtf);
+        return FALSE;
+    }
+    free_memory_stream(&rtf);
 
     file = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_NEW,
                        FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) {
         *error = GetLastError();
-        return FALSE;
-    }
-    ZeroMemory(&context, sizeof(context));
-    context.file = file;
-    ZeroMemory(&stream, sizeof(stream));
-    stream.dwCookie = (DWORD_PTR)&context;
-    stream.pfnCallback = file_write_callback;
-    SendMessageW(app->editor, EM_STREAMOUT, SF_RTF, (LPARAM)&stream);
-    if (stream.dwError != 0 || context.error != ERROR_SUCCESS) {
-        *error = context.error != ERROR_SUCCESS ? context.error : stream.dwError;
+    } else if (!write_all(file, withComments, withCommentsSize, error)) {
+        /* write_all supplied the error */
     } else if (!FlushFileBuffers(file)) {
         *error = GetLastError();
     } else {
         success = TRUE;
     }
-    if (!CloseHandle(file) && success) {
+    if (file != INVALID_HANDLE_VALUE && !CloseHandle(file) && success) {
         *error = GetLastError();
         success = FALSE;
     }
+    HeapFree(GetProcessHeap(), 0, withComments);
     return success;
 }
 
@@ -763,12 +749,30 @@ static BOOL save_to_path(AppState *app, const WCHAR *path, BOOL rtf)
     DocumentIdentity identityBeforeCommit;
     BOOL existedAtStart;
     BOOL existsBeforeCommit;
+    SIZE_T commentCount = comments_count(app);
 
-    if (!rtf && app->richFormattingUsed) {
+    if (!rtf && (app->richFormattingUsed || commentCount > 0)) {
+        WCHAR warning[512];
+        if (commentCount > 0) {
+            StringCchPrintfW(
+                warning, ARRAYSIZE(warning),
+                commentCount == 1
+                    ? L"Plain text cannot preserve fonts, colors, alignment, "
+                      L"bullets, or the document's 1 comment.\n\n"
+                      L"Save a plain-text copy anyway?"
+                    : L"Plain text cannot preserve fonts, colors, alignment, "
+                      L"bullets, or the document's %llu comments.\n\n"
+                      L"Save a plain-text copy anyway?",
+                (unsigned long long)commentCount);
+        } else {
+            StringCchCopyW(
+                warning, ARRAYSIZE(warning),
+                L"Plain text cannot preserve fonts, colors, alignment, "
+                L"bullets, or other formatting.\n\n"
+                L"Save a plain-text copy anyway?");
+        }
         int choice = MessageBoxW(
-            app->mainWindow,
-            L"Plain text cannot preserve fonts, colors, alignment, bullets, or other formatting.\n\n"
-            L"Save a plain-text copy anyway?",
+            app->mainWindow, warning,
             APP_NAME, MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
         if (choice != IDOK) {
             return FALSE;
@@ -817,6 +821,9 @@ static BOOL save_to_path(AppState *app, const WCHAR *path, BOOL rtf)
         return FALSE;
     }
     app->currentIsRtf = rtf;
+    if (!rtf && commentCount > 0) {
+        comments_clear(app);
+    }
     query_file_identity(path, &app->fileIdentity);
     document_mark_modified(app, FALSE);
     app_set_status_message(app, L"Document saved");
@@ -870,6 +877,7 @@ BOOL document_new(AppState *app, BOOL askToSave)
     if (askToSave && !document_prompt_save(app)) {
         return FALSE;
     }
+    comments_clear(app);
     app->loading = TRUE;
     SetWindowTextW(app->editor, L"");
     format_initialize_document(app);
@@ -884,6 +892,7 @@ BOOL document_new(AppState *app, BOOL askToSave)
     app->wordCountDirty = TRUE;
     app_update_status(app, TRUE);
     format_sync_controls(app);
+    app_update_command_ui(app);
     assist_document_changed(app);
     SetFocus(app->editor);
     return TRUE;
@@ -944,6 +953,19 @@ BOOL document_open_path(AppState *app, const WCHAR *path, BOOL askToSave)
                        ERROR_FILENAME_EXCED_RANGE);
         return FALSE;
     }
+    if (rtf) {
+        DWORD commentError = ERROR_SUCCESS;
+        if (!comments_load_rtf_file(app, path, &commentError)) {
+            comments_clear(app);
+            MessageBoxW(
+                app->mainWindow,
+                L"The document text opened successfully, but its WordCraft "
+                L"comment metadata was invalid and could not be loaded.",
+                APP_NAME, MB_OK | MB_ICONWARNING);
+        }
+    } else {
+        comments_clear(app);
+    }
     app->currentIsRtf = rtf;
     app->richFormattingUsed = rtf;
     app->fileIdentity = loadedIdentity;
@@ -952,9 +974,11 @@ BOOL document_open_path(AppState *app, const WCHAR *path, BOOL askToSave)
     SendMessageW(app->editor, EM_SCROLLCARET, 0, 0);
     document_mark_modified(app, FALSE);
     app->wordCountDirty = TRUE;
+    text_engine_note_layout_change(app);
     pageview_mark_dirty(app);
     app_update_status(app, TRUE);
     format_sync_controls(app);
+    app_update_command_ui(app);
     assist_document_changed(app);
     SetFocus(app->editor);
     return TRUE;

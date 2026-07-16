@@ -21,6 +21,7 @@ static void record_character_format_change(AppState *app)
     if (selection.cpMin != selection.cpMax) {
         document_mark_modified(app, TRUE);
     }
+    text_engine_note_layout_change(app);
     pageview_mark_dirty(app);
 }
 
@@ -32,24 +33,24 @@ void format_initialize_document(AppState *app)
     ZeroMemory(&character, sizeof(character));
     character.cbSize = sizeof(character);
     character.dwMask = CFM_FACE | CFM_SIZE | CFM_COLOR | CFM_CHARSET;
-    character.yHeight = 11 * 20;
+    character.yHeight = WORDCRAFT_DEFAULT_FONT_SIZE_TWIPS;
     character.crTextColor = RGB(0, 0, 0);
     character.bCharSet = DEFAULT_CHARSET;
-    StringCchCopyW(character.szFaceName, ARRAYSIZE(character.szFaceName), L"Segoe UI");
+    StringCchCopyW(character.szFaceName, ARRAYSIZE(character.szFaceName),
+                   WORDCRAFT_DEFAULT_FONT_FACE);
     SendMessageW(app->editor, EM_SETCHARFORMAT, SCF_DEFAULT, (LPARAM)&character);
     SendMessageW(app->editor, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&character);
 
     ZeroMemory(&paragraph, sizeof(paragraph));
     paragraph.cbSize = sizeof(paragraph);
     paragraph.dwMask = PFM_ALIGNMENT | PFM_NUMBERING | PFM_STARTINDENT |
-                       PFM_OFFSET | PFM_SPACEAFTER | PFM_LINESPACING;
+                       PFM_OFFSET;
     paragraph.wAlignment = PFA_LEFT;
     paragraph.wNumbering = 0;
     paragraph.dxStartIndent = 0;
     paragraph.dxOffset = 0;
-    paragraph.dySpaceAfter = 120;
-    paragraph.bLineSpacingRule = 0;
     SendMessageW(app->editor, EM_SETPARAFORMAT, 0, (LPARAM)&paragraph);
+    text_engine_apply_document_defaults(app);
     pageview_mark_dirty(app);
 }
 
@@ -129,7 +130,10 @@ void format_choose_font(AppState *app)
         ReleaseDC(app->mainWindow, dc);
     }
     ZeroMemory(&logFont, sizeof(logFont));
-    logFont.lfHeight = -MulDiv(current.yHeight > 0 ? current.yHeight : 220, dpi, 1440);
+    logFont.lfHeight = -MulDiv(
+        current.yHeight > 0 ? current.yHeight :
+                              WORDCRAFT_DEFAULT_FONT_SIZE_TWIPS,
+        dpi, 1440);
     logFont.lfWeight = (current.dwEffects & CFE_BOLD) != 0 ? FW_BOLD : FW_NORMAL;
     logFont.lfItalic = (BYTE)((current.dwEffects & CFE_ITALIC) != 0);
     logFont.lfUnderline = (BYTE)((current.dwEffects & CFE_UNDERLINE) != 0);
@@ -140,14 +144,16 @@ void format_choose_font(AppState *app)
                        current.szFaceName);
     } else {
         StringCchCopyW(logFont.lfFaceName, ARRAYSIZE(logFont.lfFaceName),
-                       L"Segoe UI");
+                       WORDCRAFT_DEFAULT_FONT_FACE);
     }
 
     ZeroMemory(&dialog, sizeof(dialog));
     dialog.lStructSize = sizeof(dialog);
     dialog.hwndOwner = app->mainWindow;
     dialog.lpLogFont = &logFont;
-    dialog.iPointSize = (current.yHeight > 0 ? current.yHeight : 220) / 2;
+    dialog.iPointSize =
+        (current.yHeight > 0 ? current.yHeight :
+                               WORDCRAFT_DEFAULT_FONT_SIZE_TWIPS) / 2;
     dialog.rgbColors = (current.dwEffects & CFE_AUTOCOLOR) != 0
                            ? RGB(0, 0, 0)
                            : current.crTextColor;
@@ -233,6 +239,7 @@ void format_set_alignment(AppState *app, WORD alignment)
     if (SendMessageW(app->editor, EM_SETPARAFORMAT, 0, (LPARAM)&paragraph)) {
         app->richFormattingUsed = TRUE;
         document_mark_modified(app, TRUE);
+        text_engine_note_layout_change(app);
         pageview_mark_dirty(app);
     }
     format_sync_controls(app);
@@ -259,6 +266,7 @@ void format_toggle_bullets(AppState *app)
     if (SendMessageW(app->editor, EM_SETPARAFORMAT, 0, (LPARAM)&change)) {
         app->richFormattingUsed = TRUE;
         document_mark_modified(app, TRUE);
+        text_engine_note_layout_change(app);
         pageview_mark_dirty(app);
     }
     format_sync_controls(app);
@@ -276,6 +284,7 @@ void format_change_indent(AppState *app, LONG deltaTwips)
     if (SendMessageW(app->editor, EM_SETPARAFORMAT, 0, (LPARAM)&change)) {
         app->richFormattingUsed = TRUE;
         document_mark_modified(app, TRUE);
+        text_engine_note_layout_change(app);
         pageview_mark_dirty(app);
     }
     SetFocus(app->editor);
@@ -373,6 +382,7 @@ void format_set_zoom(AppState *app, int percent)
     }
     if (SendMessageW(app->editor, EM_SETZOOM, (WPARAM)percent, 100)) {
         app->zoomPercent = percent;
+        text_engine_note_layout_change(app);
         pageview_layout(app);
         pageview_sync_to_caret(app, TRUE);
         app_update_status(app, FALSE);
@@ -395,6 +405,7 @@ void format_set_word_wrap(AppState *app, BOOL enabled)
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
                      SWP_FRAMECHANGED);
     app->wordWrap = TRUE;
+    text_engine_note_layout_change(app);
     pageview_layout(app);
     pageview_mark_dirty(app);
     if (!enabled) {
