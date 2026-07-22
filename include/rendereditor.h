@@ -24,6 +24,14 @@ extern "C" {
  */
 BOOL render_editor_register(HINSTANCE instance, HMODULE richEditModule);
 
+/*
+ * Sets the whitespace between the renderer's client rectangle and its text
+ * formatting rectangle.  ITextHost defines these four independent inset
+ * values in HIMETRIC units (0.01 millimeter), not as absolute coordinates.
+ */
+BOOL render_editor_set_view_insets(HWND editor, const RECT *insets);
+BOOL render_editor_get_view_insets(HWND editor, RECT *insets);
+
 /* Returns renderer diagnostics for the WCQ_RENDER_* query identifiers. */
 LRESULT render_editor_query_state(HWND editor, UINT query);
 

@@ -247,6 +247,79 @@ static BOOL probe_hit_testing(HWND editor)
     return TRUE;
 }
 
+static BOOL probe_view_insets(HWND editor)
+{
+    static const int zooms[] = {50, 100, 150};
+    RECT insets;
+    HDC dc;
+    int dpiX;
+    int dpiY;
+    SIZE_T index;
+    BOOL success = FALSE;
+
+    SetRect(&insets, 2540, 2540, 2540, 2540);
+    SendMessageW(editor, EM_SETVIEWKIND, VM_PAGE, 0);
+    dc = GetDC(editor);
+    if (dc != NULL) {
+        SendMessageW(editor, EM_SETTARGETDEVICE, (WPARAM)dc, 9360);
+        ReleaseDC(editor, dc);
+    }
+    if (SendMessageW(editor, EM_GETVIEWKIND, 0, 0) != VM_PAGE ||
+        !render_editor_set_view_insets(editor, &insets) ||
+        !SetWindowTextW(editor, L"Margin probe")) {
+        fwprintf(stderr, L"could not configure renderer view insets\n");
+        return FALSE;
+    }
+    dc = GetDC(editor);
+    if (dc == NULL) {
+        fwprintf(stderr, L"could not acquire the inset probe DC\n");
+        goto cleanup;
+    }
+    dpiX = max(1, GetDeviceCaps(dc, LOGPIXELSX));
+    dpiY = max(1, GetDeviceCaps(dc, LOGPIXELSY));
+    ReleaseDC(editor, dc);
+
+    for (index = 0; index < ARRAYSIZE(zooms); ++index) {
+        POINTL position;
+        int zoom = zooms[index];
+        int expectedX = MulDiv(dpiX, zoom, 100);
+        int expectedY = MulDiv(dpiY, zoom, 100);
+        int toleranceX = max(4, dpiX / 24);
+        int toleranceY = max(4, dpiY / 24);
+
+        SetWindowPos(editor, NULL, 0, 0,
+                     MulDiv(816, zoom, 100),
+                     MulDiv(1056, zoom, 100),
+                     SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER);
+        if (!SendMessageW(editor, EM_SETZOOM, (WPARAM)zoom, 100)) {
+            fwprintf(stderr, L"renderer rejected %d%% inset-probe zoom\n",
+                     zoom);
+            goto cleanup;
+        }
+        ZeroMemory(&position, sizeof(position));
+        SendMessageW(editor, EM_POSFROMCHAR, (WPARAM)&position, 0);
+        if (abs(position.x - expectedX) > toleranceX ||
+            abs(position.y - expectedY) > toleranceY) {
+            fwprintf(stderr,
+                     L"view inset mismatch zoom=%d position=%ld,%ld expected=%d,%d tolerance=%d,%d\n",
+                     zoom, position.x, position.y, expectedX, expectedY,
+                     toleranceX, toleranceY);
+            goto cleanup;
+        }
+    }
+    success = TRUE;
+
+cleanup:
+    SetRectEmpty(&insets);
+    render_editor_set_view_insets(editor, &insets);
+    SendMessageW(editor, EM_SETVIEWKIND, VM_NORMAL, 0);
+    SendMessageW(editor, EM_SETZOOM, 100, 100);
+    SetWindowPos(editor, NULL, 0, 0,
+                 PROBE_CAPTURE_WIDTH, PROBE_CAPTURE_HEIGHT,
+                 SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER);
+    return success;
+}
+
 static BOOL probe_typing_and_history(HWND editor, const WCHAR *sample,
                                      ProbeNotifications *notifications)
 {
@@ -639,7 +712,7 @@ int wmain(void)
             goto cleanup;
         }
     }
-    if (!probe_default_font(editor)) {
+    if (!probe_default_font(editor) || !probe_view_insets(editor)) {
         goto cleanup;
     }
 
@@ -714,7 +787,7 @@ int wmain(void)
         }
     }
 
-    wprintf(L"windowless=ok backend=%lld d2d_capable=%lld properties=0x%08lX draw_path=%lld pixels=%zu ink=%zu unicode=ok font=Times_New_Roman_12pt typing=ok undo_redo=ok hit_test=ok wrap=%ld:%ld format_range=%ld notifications=ok ole=ok nondestructive_paint=ok\n",
+    wprintf(L"windowless=ok backend=%lld d2d_capable=%lld properties=0x%08lX draw_path=%lld pixels=%zu ink=%zu unicode=ok font=Times_New_Roman_12pt view_insets=ok typing=ok undo_redo=ok hit_test=ok wrap=%ld:%ld format_range=%ld notifications=ok ole=ok nondestructive_paint=ok\n",
             (long long)backend, (long long)d2dCapable,
             (unsigned long)properties,
             (long long)render_editor_query_state(

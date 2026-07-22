@@ -3,6 +3,9 @@
 #include <limits.h>
 #include <string.h>
 
+#define DOCUMENT_LIVE_SNAPSHOT_LIMIT ((SIZE_T)16u * 1024u * 1024u)
+#define DOCUMENT_LIVE_RTF_MAX_DEPTH 256
+
 typedef struct FileStreamContext {
     HANDLE file;
     DWORD error;
@@ -495,16 +498,315 @@ static BOOL load_rtf_candidate(AppState *app, const WCHAR *path,
     return result;
 }
 
+static BOOL rtf_ascii_letter(BYTE value)
+{
+    return (value >= 'a' && value <= 'z') ||
+           (value >= 'A' && value <= 'Z');
+}
+
+static BOOL rtf_hex_digit(BYTE value)
+{
+    return (value >= '0' && value <= '9') ||
+           (value >= 'a' && value <= 'f') ||
+           (value >= 'A' && value <= 'F');
+}
+
+static BOOL rtf_word_is_bin(const BYTE *word, SIZE_T length)
+{
+    return length == 3 && (word[0] == 'b' || word[0] == 'B') &&
+           (word[1] == 'i' || word[1] == 'I') &&
+           (word[2] == 'n' || word[2] == 'N');
+}
+
+static BYTE rtf_ascii_lower(BYTE value)
+{
+    return value >= 'A' && value <= 'Z'
+               ? (BYTE)(value + ('a' - 'A'))
+               : value;
+}
+
+static BOOL rtf_word_equals(const BYTE *word, SIZE_T length,
+                            const char *expected)
+{
+    SIZE_T index;
+    SIZE_T expectedLength = strlen(expected);
+
+    if (length != expectedLength) {
+        return FALSE;
+    }
+    for (index = 0; index < length; ++index) {
+        if (rtf_ascii_lower(word[index]) != (BYTE)expected[index]) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL rtf_word_has_prefix(const BYTE *word, SIZE_T length,
+                                const char *prefix)
+{
+    SIZE_T index;
+    SIZE_T prefixLength = strlen(prefix);
+
+    if (length < prefixLength) {
+        return FALSE;
+    }
+    for (index = 0; index < prefixLength; ++index) {
+        if (rtf_ascii_lower(word[index]) != (BYTE)prefix[index]) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+/*
+ * Live snapshots cross a trust boundary.  WordCraft currently shares text,
+ * character/paragraph formatting, and its own inert comment destination; it
+ * does not need RichEdit to instantiate OLE objects, fields, drawings,
+ * pictures, linked files, embedded fonts, HTML, or opaque application data.
+ * Reject those controls before the bytes reach the native RichEdit parser.
+ */
+static BOOL rtf_live_word_is_unsafe(const BYTE *word, SIZE_T length)
+{
+    static const char *const exactWords[] = {
+        "field", "datafield", "formfield",
+        "pict", "nonshppict", "listpicture", "nextgraphic",
+        "do", "private", "datastore", "themedata",
+        "colorschememapping", "htmltag", "mhtmltag",
+        "includetext", "includepicture", "import"
+    };
+    SIZE_T index;
+
+    if (rtf_word_has_prefix(word, length, "obj") ||
+        rtf_word_has_prefix(word, length, "fld") ||
+        rtf_word_has_prefix(word, length, "shp") ||
+        rtf_word_has_prefix(word, length, "file") ||
+        rtf_word_has_prefix(word, length, "fontemb") ||
+        rtf_word_has_prefix(word, length, "fontfile") ||
+        rtf_word_has_prefix(word, length, "html")) {
+        return TRUE;
+    }
+    for (index = 0; index < ARRAYSIZE(exactWords); ++index) {
+        if (rtf_word_equals(word, length, exactWords[index])) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static BOOL validate_rtf_structure(const BYTE *data, SIZE_T size,
+                                   BOOL enforceLiveSafeSubset)
+{
+    SIZE_T index = 0;
+    LONG depth = 0;
+    BOOL rootClosed = FALSE;
+
+    if (data == NULL || size < 6 || data[0] != '{' || data[1] != '\\' ||
+        data[2] != 'r' || data[3] != 't' || data[4] != 'f' ||
+        data[5] < '0' || data[5] > '9') {
+        return FALSE;
+    }
+    while (index < size) {
+        BYTE value = data[index];
+        if (rootClosed) {
+            if (value != 0 && value != ' ' && value != '\t' &&
+                value != '\r' && value != '\n') {
+                return FALSE;
+            }
+            ++index;
+            continue;
+        }
+        if (value == 0) {
+            return FALSE;
+        }
+        if (value == '{') {
+            if (depth == 0 && index != 0) {
+                return FALSE;
+            }
+            if (depth >= DOCUMENT_LIVE_RTF_MAX_DEPTH) {
+                return FALSE;
+            }
+            ++depth;
+            ++index;
+            continue;
+        }
+        if (value == '}') {
+            if (depth <= 0) {
+                return FALSE;
+            }
+            --depth;
+            ++index;
+            if (depth == 0) {
+                rootClosed = TRUE;
+            }
+            continue;
+        }
+        if (value != '\\') {
+            ++index;
+            continue;
+        }
+
+        ++index;
+        if (index >= size) {
+            return FALSE;
+        }
+        value = data[index];
+        if (value == 0) {
+            return FALSE;
+        }
+        if (value == '\'') {
+            if (index + 2 >= size || !rtf_hex_digit(data[index + 1]) ||
+                !rtf_hex_digit(data[index + 2])) {
+                return FALSE;
+            }
+            index += 3;
+            continue;
+        }
+        if (rtf_ascii_letter(value)) {
+            SIZE_T wordStart = index;
+            SIZE_T wordLength;
+            SIZE_T binaryLength = 0;
+            BOOL negative = FALSE;
+            BOOL hasNumber = FALSE;
+            BOOL binary;
+
+            while (index < size && rtf_ascii_letter(data[index])) {
+                ++index;
+            }
+            wordLength = index - wordStart;
+            binary = rtf_word_is_bin(data + wordStart, wordLength);
+            if (enforceLiveSafeSubset &&
+                rtf_live_word_is_unsafe(data + wordStart, wordLength)) {
+                return FALSE;
+            }
+            if (index < size && data[index] == '-') {
+                negative = TRUE;
+                ++index;
+            }
+            while (index < size && data[index] >= '0' && data[index] <= '9') {
+                unsigned digit = (unsigned)(data[index] - '0');
+                hasNumber = TRUE;
+                if (binaryLength > (SIZE_MAX - digit) / 10) {
+                    return FALSE;
+                }
+                binaryLength = binaryLength * 10 + digit;
+                ++index;
+            }
+            if (index < size && data[index] == ' ') {
+                ++index;
+            }
+            if (binary) {
+                if (negative || !hasNumber || binaryLength > size - index) {
+                    return FALSE;
+                }
+                index += binaryLength;
+            }
+            continue;
+        }
+        ++index;
+        if (value == '\r' && index < size && data[index] == '\n') {
+            ++index;
+        }
+    }
+    return rootClosed && depth == 0;
+}
+
+BOOL document_validate_live_snapshot(const BYTE *data, SIZE_T size,
+                                     DWORD *error)
+{
+    if (error != NULL) {
+        *error = ERROR_SUCCESS;
+    }
+    if (data == NULL || size == 0u) {
+        if (error != NULL) {
+            *error = ERROR_INVALID_PARAMETER;
+        }
+        return FALSE;
+    }
+    if (size > DOCUMENT_LIVE_SNAPSHOT_LIMIT) {
+        if (error != NULL) {
+            *error = ERROR_FILE_TOO_LARGE;
+        }
+        return FALSE;
+    }
+    if (!validate_rtf_structure(data, size, TRUE)) {
+        if (error != NULL) {
+            *error = ERROR_INVALID_DATA;
+        }
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL normalize_rtf_memory(AppState *app, const BYTE *data, SIZE_T size,
+                                 BOOL enforceLiveSafeSubset,
+                                 MemoryStreamContext *normalized, DWORD *error)
+{
+    HWND temporaryEditor;
+    MemoryStreamContext source;
+    EDITSTREAM input;
+    BOOL result = FALSE;
+
+    if (normalized == NULL || error == NULL || app == NULL ||
+        (data == NULL && size != 0)) {
+        if (error != NULL) {
+            *error = ERROR_INVALID_PARAMETER;
+        }
+        return FALSE;
+    }
+    ZeroMemory(normalized, sizeof(*normalized));
+    *error = ERROR_SUCCESS;
+    if (size > DOCUMENT_LIVE_SNAPSHOT_LIMIT) {
+        *error = ERROR_FILE_TOO_LARGE;
+        return FALSE;
+    }
+    if (!validate_rtf_structure(data, size, enforceLiveSafeSubset)) {
+        *error = ERROR_INVALID_DATA;
+        return FALSE;
+    }
+
+    temporaryEditor = CreateWindowExW(
+        0, MSFTEDIT_CLASS, NULL, ES_MULTILINE,
+        0, 0, 0, 0, app->mainWindow, NULL, app->instance, NULL);
+    if (temporaryEditor == NULL) {
+        *error = GetLastError();
+        return FALSE;
+    }
+    SendMessageW(temporaryEditor, EM_EXLIMITTEXT, 0, 0x7FFFFFFE);
+    ZeroMemory(&source, sizeof(source));
+    source.data = (BYTE *)data;
+    source.size = size;
+    source.capacity = size;
+    ZeroMemory(&input, sizeof(input));
+    input.dwCookie = (DWORD_PTR)&source;
+    input.pfnCallback = memory_read_callback;
+    SendMessageW(temporaryEditor, EM_STREAMIN, SF_RTF, (LPARAM)&input);
+    if (input.dwError != 0) {
+        *error = input.dwError;
+    } else if (!capture_rtf(temporaryEditor, normalized, error)) {
+        /* capture_rtf supplied the error */
+    } else if (normalized->size > DOCUMENT_LIVE_SNAPSHOT_LIMIT) {
+        *error = ERROR_FILE_TOO_LARGE;
+        free_memory_stream(normalized);
+    } else {
+        result = TRUE;
+    }
+    DestroyWindow(temporaryEditor);
+    return result;
+}
+
 static BOOL apply_rtf_candidate(AppState *app, MemoryStreamContext *candidate, DWORD *error)
 {
     MemoryStreamContext backup;
     EDITSTREAM input;
     BOOL success;
     BOOL restoreFailed = FALSE;
+    BOOL wasLoading;
 
     if (!capture_rtf(app->editor, &backup, error)) {
         return FALSE;
     }
+    wasLoading = app->loading;
     app->loading = TRUE;
     SetWindowTextW(app->editor, L"");
     candidate->position = 0;
@@ -521,7 +823,7 @@ static BOOL apply_rtf_candidate(AppState *app, MemoryStreamContext *candidate, D
             restoreFailed = TRUE;
         }
     }
-    app->loading = FALSE;
+    app->loading = wasLoading;
     if (restoreFailed) {
         document_mark_modified(app, TRUE);
     }
@@ -533,10 +835,12 @@ static BOOL apply_text_candidate(AppState *app, const WCHAR *text, DWORD *error)
 {
     MemoryStreamContext backup;
     BOOL result;
+    BOOL wasLoading;
     SetLastError(ERROR_SUCCESS);
     if (!capture_rtf(app->editor, &backup, error)) {
         return FALSE;
     }
+    wasLoading = app->loading;
     app->loading = TRUE;
     SetWindowTextW(app->editor, L"");
     format_initialize_document(app);
@@ -550,7 +854,7 @@ static BOOL apply_text_candidate(AppState *app, const WCHAR *text, DWORD *error)
             *error = ERROR_INVALID_DATA;
         }
     }
-    app->loading = FALSE;
+    app->loading = wasLoading;
     free_memory_stream(&backup);
     return result;
 }
@@ -677,6 +981,195 @@ static BOOL write_rtf_file(AppState *app, const WCHAR *path, DWORD *error)
     }
     HeapFree(GetProcessHeap(), 0, withComments);
     return success;
+}
+
+BOOL document_capture_live_snapshot(AppState *app, BYTE **data,
+                                    SIZE_T *size, DWORD *error)
+{
+    MemoryStreamContext rtf;
+    BYTE *withComments = NULL;
+    SIZE_T withCommentsSize = 0;
+
+    if (app == NULL || app->editor == NULL || data == NULL || size == NULL ||
+        error == NULL) {
+        if (error != NULL) {
+            *error = ERROR_INVALID_PARAMETER;
+        }
+        return FALSE;
+    }
+    *data = NULL;
+    *size = 0;
+    *error = ERROR_SUCCESS;
+    if (!capture_rtf(app->editor, &rtf, error)) {
+        return FALSE;
+    }
+    if (!comments_embed_rtf(app, rtf.data, rtf.size, &withComments,
+                            &withCommentsSize, error)) {
+        free_memory_stream(&rtf);
+        return FALSE;
+    }
+    free_memory_stream(&rtf);
+    if (withCommentsSize > DOCUMENT_LIVE_SNAPSHOT_LIMIT) {
+        HeapFree(GetProcessHeap(), 0, withComments);
+        *error = ERROR_FILE_TOO_LARGE;
+        return FALSE;
+    }
+    *data = withComments;
+    *size = withCommentsSize;
+    return TRUE;
+}
+
+BOOL document_apply_live_snapshot(AppState *app, const BYTE *data,
+                                  SIZE_T size, DWORD *error)
+{
+    MemoryStreamContext normalized;
+    MemoryStreamContext restoreCandidate;
+    BYTE *backup = NULL;
+    SIZE_T backupSize = 0;
+    CHARRANGE selection;
+    GETTEXTLENGTHEX lengthQuery;
+    LRESULT textLength;
+    DWORD originalError = ERROR_SUCCESS;
+    DWORD rollbackError = ERROR_SUCCESS;
+    BOOL wasModified;
+    BOOL editorChanged = FALSE;
+    BOOL rollbackFailed = FALSE;
+    BOOL priorLoading;
+    LRESULT eventMask;
+    HWND oldFocus;
+
+    if (app == NULL || app->editor == NULL || error == NULL ||
+        (data == NULL && size != 0)) {
+        if (error != NULL) {
+            *error = ERROR_INVALID_PARAMETER;
+        }
+        return FALSE;
+    }
+    *error = ERROR_SUCCESS;
+    ZeroMemory(&normalized, sizeof(normalized));
+    ZeroMemory(&restoreCandidate, sizeof(restoreCandidate));
+    if (!normalize_rtf_memory(app, data, size, TRUE, &normalized, error)) {
+        return FALSE;
+    }
+    if (!document_capture_live_snapshot(app, &backup, &backupSize, error)) {
+        free_memory_stream(&normalized);
+        return FALSE;
+    }
+
+    ZeroMemory(&selection, sizeof(selection));
+    SendMessageW(app->editor, EM_EXGETSEL, 0, (LPARAM)&selection);
+    wasModified = app->modified;
+    oldFocus = GetFocus();
+    priorLoading = app->loading;
+    eventMask = SendMessageW(app->editor, EM_GETEVENTMASK, 0, 0);
+    app->loading = TRUE;
+    SendMessageW(app->editor, EM_SETEVENTMASK, 0,
+                 (LPARAM)(eventMask &
+                          ~(ENM_CHANGE | ENM_UPDATE | ENM_SELCHANGE |
+                            ENM_SCROLL | ENM_PAGECHANGE)));
+    SendMessageW(app->editor, WM_SETREDRAW, FALSE, 0);
+    comments_dismiss_highlight(app);
+    comments_clear(app);
+    if (!apply_rtf_candidate(app, &normalized, error)) {
+        originalError = *error;
+        if (!normalize_rtf_memory(app, backup, backupSize, FALSE,
+                                  &restoreCandidate, &rollbackError) ||
+            !apply_rtf_candidate(app, &restoreCandidate, &rollbackError) ||
+            !comments_load_rtf_memory(app, backup, backupSize,
+                                      &rollbackError)) {
+            originalError = rollbackError != ERROR_SUCCESS
+                                ? rollbackError : ERROR_CAN_NOT_COMPLETE;
+            rollbackFailed = TRUE;
+        }
+        editorChanged = rollbackFailed;
+        goto rollback_complete;
+    }
+    editorChanged = TRUE;
+    if (!comments_load_rtf_memory(app, data, size, error)) {
+        originalError = *error;
+        if (!normalize_rtf_memory(app, backup, backupSize, FALSE,
+                                  &restoreCandidate, &rollbackError) ||
+            !apply_rtf_candidate(app, &restoreCandidate, &rollbackError) ||
+            !comments_load_rtf_memory(app, backup, backupSize,
+                                      &rollbackError)) {
+            originalError = rollbackError != ERROR_SUCCESS
+                                ? rollbackError : ERROR_CAN_NOT_COMPLETE;
+            rollbackFailed = TRUE;
+        }
+        editorChanged = rollbackFailed;
+        goto rollback_complete;
+    }
+
+    ZeroMemory(&lengthQuery, sizeof(lengthQuery));
+    lengthQuery.flags = GTL_NUMCHARS | GTL_PRECISE;
+    lengthQuery.codepage = 1200;
+    textLength = SendMessageW(app->editor, EM_GETTEXTLENGTHEX,
+                              (WPARAM)&lengthQuery, 0);
+    if (textLength < 0) {
+        textLength = 0;
+    }
+    if (selection.cpMin < 0) {
+        selection.cpMin = 0;
+    }
+    if (selection.cpMax < selection.cpMin) {
+        selection.cpMax = selection.cpMin;
+    }
+    if (selection.cpMin > textLength) {
+        selection.cpMin = (LONG)textLength;
+    }
+    if (selection.cpMax > textLength) {
+        selection.cpMax = (LONG)textLength;
+    }
+    SendMessageW(app->editor, EM_EXSETSEL, 0, (LPARAM)&selection);
+    SendMessageW(app->editor, EM_EMPTYUNDOBUFFER, 0, 0);
+    document_mark_modified(app, TRUE);
+    app->currentIsRtf = TRUE;
+    app->richFormattingUsed = TRUE;
+    app->wordCountDirty = TRUE;
+    text_engine_note_layout_change(app);
+    pageview_mark_dirty(app);
+    format_sync_controls(app);
+    ribbon_set_active_style(app, -1);
+    assist_document_changed(app);
+    SendMessageW(app->editor, EM_SETEVENTMASK, 0, eventMask);
+    SendMessageW(app->editor, WM_SETREDRAW, TRUE, 0);
+    app->loading = priorLoading;
+    app_update_status(app, TRUE);
+    app_update_command_ui(app);
+    InvalidateRect(app->editor, NULL, FALSE);
+    InvalidateRect(app->pageView, NULL, FALSE);
+    if (oldFocus != NULL && IsWindow(oldFocus)) {
+        SetFocus(oldFocus);
+    }
+    free_memory_stream(&normalized);
+    free_memory_stream(&restoreCandidate);
+    HeapFree(GetProcessHeap(), 0, backup);
+    return TRUE;
+
+rollback_complete:
+    SendMessageW(app->editor, EM_EMPTYUNDOBUFFER, 0, 0);
+    document_mark_modified(app, wasModified || editorChanged);
+    SendMessageW(app->editor, EM_EXSETSEL, 0, (LPARAM)&selection);
+    app->wordCountDirty = TRUE;
+    text_engine_note_layout_change(app);
+    pageview_mark_dirty(app);
+    format_sync_controls(app);
+    assist_document_changed(app);
+    SendMessageW(app->editor, EM_SETEVENTMASK, 0, eventMask);
+    SendMessageW(app->editor, WM_SETREDRAW, TRUE, 0);
+    app->loading = priorLoading;
+    app_update_status(app, TRUE);
+    app_update_command_ui(app);
+    InvalidateRect(app->editor, NULL, FALSE);
+    InvalidateRect(app->pageView, NULL, FALSE);
+    if (oldFocus != NULL && IsWindow(oldFocus)) {
+        SetFocus(oldFocus);
+    }
+    free_memory_stream(&normalized);
+    free_memory_stream(&restoreCandidate);
+    HeapFree(GetProcessHeap(), 0, backup);
+    *error = originalError != ERROR_SUCCESS ? originalError : ERROR_INVALID_DATA;
+    return FALSE;
 }
 
 static BOOL create_temp_path(const WCHAR *target, WCHAR *temporary)
@@ -849,6 +1342,9 @@ void document_mark_modified(AppState *app, BOOL modified)
         document_update_title(app);
     }
     SendMessageW(app->editor, EM_SETMODIFY, modified, 0);
+    if (modified && !app->loading) {
+        live_share_document_changed(app);
+    }
 }
 
 BOOL document_prompt_save(AppState *app)
@@ -892,6 +1388,7 @@ BOOL document_new(AppState *app, BOOL askToSave)
     app->wordCountDirty = TRUE;
     app_update_status(app, TRUE);
     format_sync_controls(app);
+    ribbon_set_active_style(app, WORDCRAFT_STYLE_NORMAL);
     app_update_command_ui(app);
     assist_document_changed(app);
     SetFocus(app->editor);
@@ -926,6 +1423,10 @@ BOOL document_open_path(AppState *app, const WCHAR *path, BOOL askToSave)
         return FALSE;
     }
     rtf = is_rtf_path(path) || rtfHeader;
+    /* A candidate load can replace and then roll back the RichEdit backing
+     * store.  Dismiss display-only comment state first so its live TOM range
+     * can never outlive the text generation it was created from. */
+    comments_dismiss_highlight(app);
     ZeroMemory(&candidate, sizeof(candidate));
     if (rtf) {
         if (load_rtf_candidate(app, path, &candidate, &loadedIdentity, &error)) {
@@ -978,6 +1479,7 @@ BOOL document_open_path(AppState *app, const WCHAR *path, BOOL askToSave)
     pageview_mark_dirty(app);
     app_update_status(app, TRUE);
     format_sync_controls(app);
+    ribbon_set_active_style(app, rtf ? -1 : WORDCRAFT_STYLE_NORMAL);
     app_update_command_ui(app);
     assist_document_changed(app);
     SetFocus(app->editor);

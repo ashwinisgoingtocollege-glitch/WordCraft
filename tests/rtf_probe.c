@@ -18,6 +18,147 @@ typedef struct ParagraphExpectation {
     BOOL bullets;
 } ParagraphExpectation;
 
+/* document.c is linked into this probe so the live-snapshot gate is tested
+ * through its real public apply path.  These no-op collaborators keep the
+ * probe focused on RTF streaming and validation rather than the full UI. */
+void app_update_status(AppState *app, BOOL recountWords)
+{
+    (void)app;
+    (void)recountWords;
+}
+
+void app_set_status_message(AppState *app, const WCHAR *message)
+{
+    (void)app;
+    (void)message;
+}
+
+void app_update_command_ui(AppState *app)
+{
+    (void)app;
+}
+
+void app_show_error(HWND owner, const WCHAR *action, DWORD errorCode)
+{
+    (void)owner;
+    (void)action;
+    (void)errorCode;
+}
+
+BOOL editor_get_all_text(HWND editor, BOOL useCrlf, WCHAR **text,
+                         SIZE_T *length, DWORD *error)
+{
+    (void)editor;
+    (void)useCrlf;
+    (void)text;
+    (void)length;
+    if (error != NULL) {
+        *error = ERROR_CALL_NOT_IMPLEMENTED;
+    }
+    return FALSE;
+}
+
+void assist_document_changed(AppState *app)
+{
+    (void)app;
+}
+
+void comments_clear(AppState *app)
+{
+    (void)app;
+}
+
+void comments_dismiss_highlight(AppState *app)
+{
+    (void)app;
+}
+
+SIZE_T comments_count(const AppState *app)
+{
+    (void)app;
+    return 0;
+}
+
+BOOL comments_embed_rtf(AppState *app, const BYTE *rtf, SIZE_T rtfSize,
+                        BYTE **output, SIZE_T *outputSize, DWORD *error)
+{
+    BYTE *copy;
+
+    (void)app;
+    if (output == NULL || outputSize == NULL || error == NULL ||
+        (rtf == NULL && rtfSize != 0)) {
+        if (error != NULL) {
+            *error = ERROR_INVALID_PARAMETER;
+        }
+        return FALSE;
+    }
+    copy = HeapAlloc(GetProcessHeap(), 0, rtfSize == 0 ? 1 : rtfSize);
+    if (copy == NULL) {
+        *error = ERROR_NOT_ENOUGH_MEMORY;
+        return FALSE;
+    }
+    if (rtfSize != 0) {
+        CopyMemory(copy, rtf, rtfSize);
+    }
+    *output = copy;
+    *outputSize = rtfSize;
+    *error = ERROR_SUCCESS;
+    return TRUE;
+}
+
+BOOL comments_load_rtf_memory(AppState *app, const BYTE *data, SIZE_T size,
+                              DWORD *error)
+{
+    (void)app;
+    (void)data;
+    (void)size;
+    if (error != NULL) {
+        *error = ERROR_SUCCESS;
+    }
+    return TRUE;
+}
+
+BOOL comments_load_rtf_file(AppState *app, const WCHAR *path, DWORD *error)
+{
+    (void)app;
+    (void)path;
+    if (error != NULL) {
+        *error = ERROR_CALL_NOT_IMPLEMENTED;
+    }
+    return FALSE;
+}
+
+void format_initialize_document(AppState *app)
+{
+    (void)app;
+}
+
+void format_sync_controls(AppState *app)
+{
+    (void)app;
+}
+
+void live_share_document_changed(AppState *app)
+{
+    (void)app;
+}
+
+void pageview_mark_dirty(AppState *app)
+{
+    (void)app;
+}
+
+void ribbon_set_active_style(AppState *app, int style)
+{
+    (void)app;
+    (void)style;
+}
+
+void text_engine_note_layout_change(AppState *app)
+{
+    (void)app;
+}
+
 static DWORD CALLBACK write_buffer(DWORD_PTR cookie, LPBYTE data,
                                    LONG requested, LONG *written)
 {
@@ -129,6 +270,51 @@ static BOOL all_paragraphs_match(HWND editor, const WCHAR *text,
     return TRUE;
 }
 
+static BOOL live_snapshot_rejected_without_mutation(AppState *app,
+                                                    const char *rtf,
+                                                    SIZE_T size)
+{
+    static const WCHAR sentinel[] = L"unchanged sentinel";
+    WCHAR actual[64];
+    DWORD error = ERROR_SUCCESS;
+
+    if (app == NULL || rtf == NULL ||
+        !SetWindowTextW(app->editor, sentinel) ||
+        document_apply_live_snapshot(app, (const BYTE *)rtf, size, &error) ||
+        error != ERROR_INVALID_DATA) {
+        return FALSE;
+    }
+    actual[0] = L'\0';
+    GetWindowTextW(app->editor, actual, ARRAYSIZE(actual));
+    return wcscmp(actual, sentinel) == 0;
+}
+
+static BOOL build_excessively_nested_rtf(char *buffer, SIZE_T capacity,
+                                         SIZE_T *size)
+{
+    static const char prefix[] = "{\\rtf1\\ansi ";
+    SIZE_T cursor = 0;
+    SIZE_T index;
+    const SIZE_T nestedGroups = 300;
+
+    if (buffer == NULL || size == NULL ||
+        capacity < sizeof(prefix) - 1 + nestedGroups * 2 + 2) {
+        return FALSE;
+    }
+    CopyMemory(buffer, prefix, sizeof(prefix) - 1);
+    cursor = sizeof(prefix) - 1;
+    for (index = 0; index < nestedGroups; ++index) {
+        buffer[cursor++] = '{';
+    }
+    buffer[cursor++] = 'x';
+    for (index = 0; index < nestedGroups; ++index) {
+        buffer[cursor++] = '}';
+    }
+    buffer[cursor++] = '}';
+    *size = cursor;
+    return TRUE;
+}
+
 int main(void)
 {
     static const WCHAR source[] = L"Bold caf\x00E9 \x6F22\x5B57 plain";
@@ -150,6 +336,19 @@ int main(void)
         {L"Second bullet paragraph", PFA_LEFT, TRUE},
         {L"Plain paragraph after bullets", PFA_LEFT, FALSE},
     };
+    static const char safeLiveRtf[] =
+        "{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Times New Roman;}}"
+        "\\f0\\fs24\\b Safe\\b0  live text}";
+    static const char escapedControlTextRtf[] =
+        "{\\rtf1\\ansi Escaped \\\\object text}";
+    static const char objectRtf[] =
+        "{\\rtf1\\ansi Safe{\\ObJeCt\\objemb"
+        "{\\*\\objclass Package}{\\*\\objdata 0102}}}";
+    static const char fieldRtf[] =
+        "{\\rtf1\\ansi {\\field{\\*\\fldinst INCLUDETEXT "
+        "\"C:\\\\secret.txt\"}{\\fldrslt linked text}}}";
+    static const char pictureRtf[] =
+        "{\\rtf1\\ansi {\\pict\\pngblip 89504E47}}";
     HMODULE rich = LoadLibraryW(L"Msftedit.dll");
     HWND parent;
     HWND editor;
@@ -157,6 +356,10 @@ int main(void)
     EDITSTREAM stream;
     CHARFORMAT2W format;
     WCHAR restored[1024];
+    char nestedRtf[1024];
+    SIZE_T nestedRtfSize = 0;
+    AppState app;
+    DWORD liveError = ERROR_SUCCESS;
     LONG positions[ARRAYSIZE(paragraphExpectations)];
     SIZE_T index;
     int result = 1;
@@ -172,6 +375,11 @@ int main(void)
         result = 11;
         goto cleanup;
     }
+    ZeroMemory(&app, sizeof(app));
+    app.instance = GetModuleHandleW(NULL);
+    app.mainWindow = parent;
+    app.pageView = parent;
+    app.editor = editor;
     SendMessageW(editor, EM_EXLIMITTEXT, 0, 0x7FFFFFFE);
     SetWindowTextW(editor, source);
     SendMessageW(editor, EM_SETSEL, 0, 4);
@@ -277,11 +485,56 @@ int main(void)
     if (stream.dwError != 0 ||
         GetWindowTextW(editor, restored, ARRAYSIZE(restored)) <= 0 ||
         !all_paragraphs_match(editor, restored, paragraphExpectations,
-                              ARRAYSIZE(paragraphExpectations))) {
+                               ARRAYSIZE(paragraphExpectations))) {
         result = 23;
         goto cleanup_buffer;
     }
-    printf("rtf_unicode=ok formatting_round_trip=ok\n");
+
+    liveError = ERROR_SUCCESS;
+    ZeroMemory(restored, sizeof(restored));
+    if (!document_apply_live_snapshot(
+            &app, (const BYTE *)safeLiveRtf, sizeof(safeLiveRtf) - 1,
+            &liveError) || liveError != ERROR_SUCCESS ||
+        GetWindowTextW(editor, restored, ARRAYSIZE(restored)) <= 0 ||
+        wcscmp(restored, L"Safe live text") != 0) {
+        fprintf(stderr, "safe live RTF was rejected (error=%lu)\n",
+                (unsigned long)liveError);
+        result = 24;
+        goto cleanup_buffer;
+    }
+    liveError = ERROR_SUCCESS;
+    ZeroMemory(restored, sizeof(restored));
+    if (!document_apply_live_snapshot(
+            &app, (const BYTE *)escapedControlTextRtf,
+            sizeof(escapedControlTextRtf) - 1, &liveError) ||
+        liveError != ERROR_SUCCESS ||
+        GetWindowTextW(editor, restored, ARRAYSIZE(restored)) <= 0 ||
+        wcscmp(restored, L"Escaped \\object text") != 0) {
+        fprintf(stderr, "escaped control-like text was rejected (error=%lu)\n",
+                (unsigned long)liveError);
+        result = 25;
+        goto cleanup_buffer;
+    }
+    if (!live_snapshot_rejected_without_mutation(
+            &app, objectRtf, sizeof(objectRtf) - 1) ||
+        !live_snapshot_rejected_without_mutation(
+            &app, fieldRtf, sizeof(fieldRtf) - 1) ||
+        !live_snapshot_rejected_without_mutation(
+            &app, pictureRtf, sizeof(pictureRtf) - 1)) {
+        fprintf(stderr, "active or embedded live RTF was accepted\n");
+        result = 26;
+        goto cleanup_buffer;
+    }
+    if (!build_excessively_nested_rtf(nestedRtf, ARRAYSIZE(nestedRtf),
+                                      &nestedRtfSize) ||
+        !live_snapshot_rejected_without_mutation(
+            &app, nestedRtf, nestedRtfSize)) {
+        fprintf(stderr, "excessively nested live RTF was accepted\n");
+        result = 27;
+        goto cleanup_buffer;
+    }
+    printf("rtf_unicode=ok formatting_round_trip=ok "
+           "live_safe_subset=ok live_depth_limit=ok\n");
     result = 0;
 
 cleanup_buffer:

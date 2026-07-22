@@ -11,6 +11,57 @@ static const WCHAR *const expectedRibbonTabNames[RIBBON_TAB_COUNT] = {
     L"References", L"Mailings", L"Review", L"View", L"Help"
 };
 
+static const WCHAR *const expectedHomeGroupNames[HOME_GROUP_COUNT] = {
+    L"Clipboard", L"Font", L"Paragraph", L"Styles", L"Editing"
+};
+
+typedef struct ExpectedHomeControl {
+    UINT id;
+    int group;
+} ExpectedHomeControl;
+
+static const ExpectedHomeControl expectedHomeControls[] = {
+    {IDM_EDIT_PASTE, HOME_GROUP_CLIPBOARD},
+    {IDM_EDIT_CUT, HOME_GROUP_CLIPBOARD},
+    {IDM_EDIT_COPY, HOME_GROUP_CLIPBOARD},
+    {IDC_FONT_COMBO, HOME_GROUP_FONT},
+    {IDC_SIZE_COMBO, HOME_GROUP_FONT},
+    {IDM_FORMAT_GROW_FONT, HOME_GROUP_FONT},
+    {IDM_FORMAT_SHRINK_FONT, HOME_GROUP_FONT},
+    {IDM_FORMAT_CLEAR, HOME_GROUP_FONT},
+    {IDC_FORMAT_BOLD, HOME_GROUP_FONT},
+    {IDC_FORMAT_ITALIC, HOME_GROUP_FONT},
+    {IDC_FORMAT_UNDERLINE, HOME_GROUP_FONT},
+    {IDC_FORMAT_STRIKE, HOME_GROUP_FONT},
+    {IDM_FORMAT_SUBSCRIPT, HOME_GROUP_FONT},
+    {IDM_FORMAT_SUPERSCRIPT, HOME_GROUP_FONT},
+    {IDM_FORMAT_HIGHLIGHT, HOME_GROUP_FONT},
+    {IDC_TEXT_COLOR, HOME_GROUP_FONT},
+    {IDC_BULLETS, HOME_GROUP_PARAGRAPH},
+    {IDM_FORMAT_NUMBERING, HOME_GROUP_PARAGRAPH},
+    {IDM_FORMAT_INDENT_DECREASE, HOME_GROUP_PARAGRAPH},
+    {IDM_FORMAT_INDENT_INCREASE, HOME_GROUP_PARAGRAPH},
+    {IDC_ALIGN_LEFT, HOME_GROUP_PARAGRAPH},
+    {IDC_ALIGN_CENTER, HOME_GROUP_PARAGRAPH},
+    {IDC_ALIGN_RIGHT, HOME_GROUP_PARAGRAPH},
+    {IDC_ALIGN_JUSTIFY, HOME_GROUP_PARAGRAPH},
+    {IDM_FORMAT_LINE_SPACING, HOME_GROUP_PARAGRAPH},
+    {IDM_STYLE_NORMAL, HOME_GROUP_STYLES},
+    {IDM_STYLE_NO_SPACING, HOME_GROUP_STYLES},
+    {IDM_STYLE_HEADING_1, HOME_GROUP_STYLES},
+    {IDM_STYLE_HEADING_2, HOME_GROUP_STYLES},
+    {IDM_STYLE_TITLE, HOME_GROUP_STYLES},
+    {IDC_HOME_STYLE_COMBO, HOME_GROUP_STYLES},
+    {IDM_EDIT_FIND, HOME_GROUP_EDITING},
+    {IDM_EDIT_REPLACE, HOME_GROUP_EDITING},
+    {IDM_EDIT_SELECT_ALL, HOME_GROUP_EDITING},
+    {IDC_HOME_GROUP_CLIPBOARD, HOME_GROUP_CLIPBOARD},
+    {IDC_HOME_GROUP_FONT, HOME_GROUP_FONT},
+    {IDC_HOME_GROUP_PARAGRAPH, HOME_GROUP_PARAGRAPH},
+    {IDC_HOME_GROUP_STYLES, HOME_GROUP_STYLES},
+    {IDC_HOME_GROUP_EDITING, HOME_GROUP_EDITING}
+};
+
 static const WCHAR firstCommentText[] = L"Opening note: caf\x00E9";
 static const WCHAR secondCommentText[] = L"Second-page review note";
 
@@ -232,6 +283,17 @@ static BOOL query_wordcraft_state(HWND window, WPARAM query, LPARAM argument,
                                 value);
 }
 
+static BOOL scalar_within_tolerance(LRESULT actual, LONG expected,
+                                    LONG tolerance)
+{
+    LONGLONG difference = (LONGLONG)actual - expected;
+
+    if (difference < 0) {
+        difference = -difference;
+    }
+    return difference <= tolerance;
+}
+
 static BOOL query_text_engine_snapshot(HWND window,
                                        TextEngineSnapshot *snapshot)
 {
@@ -331,6 +393,144 @@ static BOOL get_paragraph_format_bounded(HWND editor, HANDLE process,
     return success;
 }
 
+static BOOL get_character_format_bounded(HWND editor, HANDLE process,
+                                         CHARFORMAT2W *character)
+{
+    CHARFORMAT2W request;
+    void *remoteCharacter;
+    SIZE_T transferred = 0;
+    BOOL success = FALSE;
+
+    if (editor == NULL || process == NULL || character == NULL) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    ZeroMemory(&request, sizeof(request));
+    request.cbSize = sizeof(request);
+    remoteCharacter = VirtualAllocEx(process, NULL, sizeof(request),
+                                     MEM_COMMIT | MEM_RESERVE,
+                                     PAGE_READWRITE);
+    if (remoteCharacter == NULL) {
+        return FALSE;
+    }
+    if (WriteProcessMemory(process, remoteCharacter, &request,
+                           sizeof(request), &transferred) &&
+        transferred == sizeof(request) &&
+        send_message_bounded(editor, EM_GETCHARFORMAT, SCF_SELECTION,
+                             (LPARAM)remoteCharacter, NULL)) {
+        transferred = 0;
+        if (ReadProcessMemory(process, remoteCharacter, character,
+                              sizeof(*character), &transferred) &&
+            transferred == sizeof(*character) &&
+            character->cbSize == sizeof(*character)) {
+            success = TRUE;
+        }
+    }
+    VirtualFreeEx(process, remoteCharacter, 0, MEM_RELEASE);
+    return success;
+}
+
+static BOOL find_text_bounded(HWND editor, HANDLE process,
+                              const WCHAR *needle, LONG *position)
+{
+    FINDTEXTEXW request;
+    FINDTEXTEXW result;
+    void *remoteNeedle = NULL;
+    void *remoteRequest = NULL;
+    SIZE_T needleBytes;
+    SIZE_T transferred = 0;
+    LRESULT found = -1;
+    BOOL success = FALSE;
+
+    if (editor == NULL || process == NULL || needle == NULL ||
+        needle[0] == L'\0' || position == NULL) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    needleBytes = (wcslen(needle) + 1) * sizeof(*needle);
+    remoteNeedle = VirtualAllocEx(process, NULL, needleBytes,
+                                  MEM_COMMIT | MEM_RESERVE,
+                                  PAGE_READWRITE);
+    remoteRequest = VirtualAllocEx(process, NULL, sizeof(request),
+                                   MEM_COMMIT | MEM_RESERVE,
+                                   PAGE_READWRITE);
+    if (remoteNeedle == NULL || remoteRequest == NULL) {
+        goto cleanup;
+    }
+    ZeroMemory(&request, sizeof(request));
+    request.chrg.cpMin = 0;
+    request.chrg.cpMax = -1;
+    request.lpstrText = (LPCWSTR)remoteNeedle;
+    if (!WriteProcessMemory(process, remoteNeedle, needle, needleBytes,
+                            &transferred) ||
+        transferred != needleBytes) {
+        goto cleanup;
+    }
+    transferred = 0;
+    if (!WriteProcessMemory(process, remoteRequest, &request,
+                            sizeof(request), &transferred) ||
+        transferred != sizeof(request) ||
+        !send_message_bounded(editor, EM_FINDTEXTEXW, FR_DOWN,
+                              (LPARAM)remoteRequest, &found) ||
+        found < 0) {
+        goto cleanup;
+    }
+    transferred = 0;
+    if (!ReadProcessMemory(process, remoteRequest, &result,
+                           sizeof(result), &transferred) ||
+        transferred != sizeof(result) || result.chrgText.cpMin != found ||
+        result.chrgText.cpMax <= result.chrgText.cpMin) {
+        goto cleanup;
+    }
+    *position = result.chrgText.cpMin;
+    success = TRUE;
+
+cleanup:
+    if (remoteRequest != NULL) {
+        VirtualFreeEx(process, remoteRequest, 0, MEM_RELEASE);
+    }
+    if (remoteNeedle != NULL) {
+        VirtualFreeEx(process, remoteNeedle, 0, MEM_RELEASE);
+    }
+    return success;
+}
+
+static BOOL character_formats_match(const CHARFORMAT2W *left,
+                                    const CHARFORMAT2W *right)
+{
+    const DWORD effects =
+        CFE_BOLD | CFE_ITALIC | CFE_UNDERLINE | CFE_STRIKEOUT |
+        CFE_SUBSCRIPT | CFE_SUPERSCRIPT | CFE_AUTOCOLOR |
+        CFE_AUTOBACKCOLOR;
+
+    return left != NULL && right != NULL &&
+           left->yHeight == right->yHeight &&
+           left->yOffset == right->yOffset &&
+           left->crTextColor == right->crTextColor &&
+           left->crBackColor == right->crBackColor &&
+           (left->dwEffects & effects) == (right->dwEffects & effects) &&
+           left->bCharSet == right->bCharSet &&
+           lstrcmpW(left->szFaceName, right->szFaceName) == 0;
+}
+
+static BOOL paragraph_formats_match(const PARAFORMAT2 *left,
+                                    const PARAFORMAT2 *right)
+{
+    return left != NULL && right != NULL &&
+           left->wAlignment == right->wAlignment &&
+           left->wNumbering == right->wNumbering &&
+           left->wNumberingStyle == right->wNumberingStyle &&
+           left->wNumberingStart == right->wNumberingStart &&
+           left->wNumberingTab == right->wNumberingTab &&
+           left->dxStartIndent == right->dxStartIndent &&
+           left->dxRightIndent == right->dxRightIndent &&
+           left->dxOffset == right->dxOffset &&
+           left->dySpaceBefore == right->dySpaceBefore &&
+           left->dySpaceAfter == right->dySpaceAfter &&
+           left->bLineSpacingRule == right->bLineSpacingRule &&
+           left->dyLineSpacing == right->dyLineSpacing;
+}
+
 static BOOL paragraph_has_text_engine_defaults(const PARAFORMAT2 *paragraph)
 {
     DWORD requiredMask = PFM_LINESPACING | PFM_SPACEAFTER;
@@ -353,6 +553,409 @@ static UINT probe_text_hash(const WCHAR *text)
         hash *= 16777619u;
     }
     return hash;
+}
+
+static BOOL query_home_group_rect(HWND window, int group, RECT *rect)
+{
+    LRESULT values[4];
+    int component;
+
+    if (rect == NULL || group < 0 || group >= HOME_GROUP_COUNT) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    for (component = 0; component < 4; ++component) {
+        if (!query_wordcraft_state(
+                window, WCQ_HOME_GROUP_RECT_COMPONENT,
+                group * 4 + component, &values[component]) ||
+            values[component] < LONG_MIN ||
+            values[component] > LONG_MAX) {
+            return FALSE;
+        }
+    }
+    rect->left = (LONG)values[0];
+    rect->top = (LONG)values[1];
+    rect->right = (LONG)values[2];
+    rect->bottom = (LONG)values[3];
+    return TRUE;
+}
+
+static BOOL home_control_is_style_button(UINT id)
+{
+    return id >= IDM_STYLE_NORMAL && id <= IDM_STYLE_TITLE;
+}
+
+static BOOL home_control_is_group_label(UINT id)
+{
+    return id >= IDC_HOME_GROUP_CLIPBOARD &&
+           id <= IDC_HOME_GROUP_EDITING;
+}
+
+static BOOL home_control_hidden_in_collapsed(UINT id)
+{
+    switch (id) {
+    case IDM_FORMAT_GROW_FONT:
+    case IDM_FORMAT_SHRINK_FONT:
+    case IDM_FORMAT_CLEAR:
+    case IDC_FORMAT_STRIKE:
+    case IDM_FORMAT_SUBSCRIPT:
+    case IDM_FORMAT_SUPERSCRIPT:
+    case IDM_FORMAT_HIGHLIGHT:
+    case IDM_FORMAT_INDENT_DECREASE:
+    case IDM_FORMAT_INDENT_INCREASE:
+    case IDM_FORMAT_LINE_SPACING:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+static BOOL validate_home_layout_contract(HWND window, HWND formatBar,
+                                          int expectedMode)
+{
+    RECT client;
+    RECT previous = {0};
+    LRESULT groupCount = 0;
+    LRESULT controlCount = 0;
+    LRESULT paintCount = 0;
+    LRESULT mode = 0;
+    size_t index;
+
+    if (window == NULL || formatBar == NULL ||
+        (expectedMode != RIBBON_LAYOUT_FULL &&
+         expectedMode != RIBBON_LAYOUT_COMPACT &&
+         expectedMode != RIBBON_LAYOUT_COLLAPSED) ||
+        !GetClientRect(formatBar, &client) ||
+        !query_wordcraft_state(window, WCQ_HOME_GROUP_COUNT, 0,
+                               &groupCount) ||
+        !query_wordcraft_state(window, WCQ_HOME_CONTROL_COUNT, 0,
+                               &controlCount) ||
+        !query_wordcraft_state(window, WCQ_HOME_GROUP_PAINT_COUNT, 0,
+                               &paintCount) ||
+        !query_wordcraft_state(window, WCQ_RIBBON_LAYOUT_MODE, 0, &mode) ||
+        groupCount != HOME_GROUP_COUNT ||
+        controlCount != (LRESULT)ARRAYSIZE(expectedHomeControls) ||
+        mode != expectedMode || client.right <= client.left ||
+        client.bottom <= client.top || paintCount < 0) {
+        return FALSE;
+    }
+
+    for (index = 0; index < HOME_GROUP_COUNT; ++index) {
+        RECT rect;
+        LRESULT hash = 0;
+        LRESULT flags = 0;
+        UINT required = HOME_GROUP_FLAG_VISIBLE |
+                        HOME_GROUP_FLAG_LABEL_VISIBLE;
+        BOOL gallery = index == HOME_GROUP_STYLES &&
+                       expectedMode == RIBBON_LAYOUT_FULL;
+        BOOL collapsed = expectedMode == RIBBON_LAYOUT_COLLAPSED;
+
+        if (!query_wordcraft_state(window, WCQ_HOME_GROUP_NAME_HASH,
+                                   (LPARAM)index, &hash) ||
+            !query_wordcraft_state(window, WCQ_HOME_GROUP_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            !query_home_group_rect(window, (int)index, &rect) ||
+            (UINT)(DWORD_PTR)hash !=
+                probe_text_hash(expectedHomeGroupNames[index]) ||
+            ((UINT)flags & required) != required ||
+            (((UINT)flags & HOME_GROUP_FLAG_STYLE_GALLERY) != 0) !=
+                gallery ||
+            ((((UINT)flags & HOME_GROUP_FLAG_COLLAPSED) != 0) !=
+             collapsed) ||
+            rect.left < client.left || rect.top < client.top ||
+            rect.right > client.right || rect.bottom > client.bottom ||
+            rect.right <= rect.left || rect.bottom <= rect.top ||
+            (index > 0 && rect.left < previous.right)) {
+            return FALSE;
+        }
+        previous = rect;
+    }
+
+    for (index = 0; index < ARRAYSIZE(expectedHomeControls); ++index) {
+        LRESULT id = 0;
+        LRESULT group = -1;
+        LRESULT flags = 0;
+        UINT expectedId = expectedHomeControls[index].id;
+        BOOL expectedVisible;
+        BOOL expectedTabstop = !home_control_is_group_label(expectedId);
+
+        if (expectedMode == RIBBON_LAYOUT_FULL) {
+            expectedVisible = expectedId != IDC_HOME_STYLE_COMBO;
+        } else {
+            expectedVisible = !home_control_is_style_button(expectedId);
+            if (expectedMode == RIBBON_LAYOUT_COLLAPSED &&
+                home_control_hidden_in_collapsed(expectedId)) {
+                expectedVisible = FALSE;
+            }
+        }
+
+        if (!query_wordcraft_state(window, WCQ_HOME_CONTROL_ID,
+                                   (LPARAM)index, &id) ||
+            !query_wordcraft_state(window, WCQ_HOME_CONTROL_GROUP,
+                                   (LPARAM)index, &group) ||
+            !query_wordcraft_state(window, WCQ_HOME_CONTROL_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            id != expectedId || group != expectedHomeControls[index].group ||
+            ((UINT)flags & HOME_CONTROL_FLAG_CREATED) == 0 ||
+            ((((UINT)flags & HOME_CONTROL_FLAG_VISIBLE) != 0) !=
+             expectedVisible) ||
+            ((((UINT)flags & HOME_CONTROL_FLAG_TABSTOP) != 0) !=
+             expectedTabstop)) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL wait_for_home_layout(HWND window, LRESULT previousGeneration,
+                                 int expectedMode,
+                                 LRESULT *currentGeneration)
+{
+    int attempt;
+
+    for (attempt = 0; attempt < 100; ++attempt) {
+        LRESULT generation = 0;
+        LRESULT mode = 0;
+        if (!query_wordcraft_state(window, WCQ_RIBBON_LAYOUT_GENERATION, 0,
+                                   &generation) ||
+            !query_wordcraft_state(window, WCQ_RIBBON_LAYOUT_MODE, 0,
+                                   &mode)) {
+            return FALSE;
+        }
+        if (generation != previousGeneration &&
+            (expectedMode == 0 || mode == expectedMode)) {
+            if (currentGeneration != NULL) {
+                *currentGeneration = generation;
+            }
+            return TRUE;
+        }
+        Sleep(20);
+    }
+    return FALSE;
+}
+
+static BOOL resize_window_for_home_layout(HWND window, int logicalWidth,
+                                          int expectedMode,
+                                          LRESULT *currentGeneration)
+{
+    RECT client;
+    RECT frame;
+    HDC dc;
+    int dpiX = 96;
+    int dpiY = 96;
+    int frameWidth;
+    int frameHeight;
+    int targetWidth;
+    int targetHeight;
+    LRESULT generation = 0;
+
+    if (window == NULL || logicalWidth <= 0 ||
+        !GetClientRect(window, &client) || !GetWindowRect(window, &frame) ||
+        !query_wordcraft_state(window, WCQ_RIBBON_LAYOUT_GENERATION, 0,
+                               &generation)) {
+        return FALSE;
+    }
+    dc = GetDC(window);
+    if (dc != NULL) {
+        dpiX = max(1, GetDeviceCaps(dc, LOGPIXELSX));
+        dpiY = max(1, GetDeviceCaps(dc, LOGPIXELSY));
+        ReleaseDC(window, dc);
+    }
+    frameWidth = (frame.right - frame.left) - (client.right - client.left);
+    frameHeight = (frame.bottom - frame.top) - (client.bottom - client.top);
+    targetWidth = MulDiv(logicalWidth, dpiX, 96) + max(0, frameWidth);
+    targetHeight = MulDiv(780, dpiY, 96) + max(0, frameHeight);
+    if (!SetWindowPos(window, NULL, 0, 0, targetWidth, targetHeight,
+                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)) {
+        return FALSE;
+    }
+    return wait_for_home_layout(window, generation, expectedMode,
+                                currentGeneration);
+}
+
+static BOOL restore_window_size(HWND window, const RECT *original)
+{
+    LRESULT generation = 0;
+
+    if (window == NULL || original == NULL ||
+        !query_wordcraft_state(window, WCQ_RIBBON_LAYOUT_GENERATION, 0,
+                               &generation) ||
+        !SetWindowPos(window, NULL, 0, 0,
+                      original->right - original->left,
+                      original->bottom - original->top,
+                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)) {
+        return FALSE;
+    }
+    return wait_for_home_layout(window, generation, 0, NULL);
+}
+
+static BOOL force_home_group_paint(HWND window, HWND formatBar)
+{
+    HIGHCONTRASTW contrast;
+    LRESULT before = 0;
+    LRESULT after = 0;
+    BOOL painted = FALSE;
+    BOOL highContrast = FALSE;
+    BOOL success;
+
+    ZeroMemory(&contrast, sizeof(contrast));
+    contrast.cbSize = sizeof(contrast);
+    if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast),
+                              &contrast, 0)) {
+        highContrast = (contrast.dwFlags & HCF_HIGHCONTRASTON) != 0;
+    }
+    if (window == NULL || formatBar == NULL ||
+        !query_wordcraft_state(window, WCQ_HOME_GROUP_PAINT_COUNT, 0,
+                               &before)) {
+        return FALSE;
+    }
+    painted = send_message_bounded(formatBar, WM_PAINT, 0, 0, NULL);
+    if (!painted ||
+        !query_wordcraft_state(window, WCQ_HOME_GROUP_PAINT_COUNT, 0,
+                               &after)) {
+        return FALSE;
+    }
+    success = highContrast || after > before;
+    if (!success) {
+        fwprintf(stderr,
+                 L"Home group paint telemetry did not advance (painted=%d before=%lld after=%lld high_contrast=%d)\n",
+                 painted, (long long)before, (long long)after,
+                 highContrast);
+    }
+    return success;
+}
+
+static BOOL first_enabled_home_tabstop(HWND window, LRESULT *controlId)
+{
+    LRESULT count = 0;
+    LRESULT index;
+
+    if (controlId == NULL ||
+        !query_wordcraft_state(window, WCQ_HOME_CONTROL_COUNT, 0, &count)) {
+        return FALSE;
+    }
+    for (index = 0; index < count; ++index) {
+        LRESULT id = 0;
+        LRESULT flags = 0;
+        UINT required = HOME_CONTROL_FLAG_CREATED |
+                        HOME_CONTROL_FLAG_VISIBLE |
+                        HOME_CONTROL_FLAG_ENABLED |
+                        HOME_CONTROL_FLAG_TABSTOP;
+        if (!query_wordcraft_state(window, WCQ_HOME_CONTROL_ID, index, &id) ||
+            !query_wordcraft_state(window, WCQ_HOME_CONTROL_FLAGS, index,
+                                   &flags)) {
+            return FALSE;
+        }
+        if (((UINT)flags & required) == required) {
+            *controlId = id;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static BOOL wait_for_ribbon_control_focus(HWND window,
+                                          LRESULT expectedControlId)
+{
+    int attempt;
+
+    for (attempt = 0; attempt < 100; ++attempt) {
+        LRESULT controlId = 0;
+        if (!query_wordcraft_state(window,
+                                   WCQ_RIBBON_FOCUSED_CONTROL_ID, 0,
+                                   &controlId)) {
+            return FALSE;
+        }
+        if (controlId == expectedControlId) {
+            return TRUE;
+        }
+        Sleep(20);
+    }
+    return FALSE;
+}
+
+static BOOL focus_home_control(HWND window, HWND formatBar,
+                               LRESULT targetControlId)
+{
+    HWND target;
+
+    if (window == NULL || formatBar == NULL || targetControlId == 0) {
+        return FALSE;
+    }
+    target = find_control(formatBar, (int)targetControlId);
+    if (target == NULL ||
+        !send_message_bounded(target, WM_LBUTTONDOWN, MK_LBUTTON,
+                              MAKELPARAM(2, 2), NULL) ||
+        !wait_for_ribbon_control_focus(window, targetControlId) ||
+        !send_message_bounded(target, WM_CANCELMODE, 0, 0, NULL)) {
+        return FALSE;
+    }
+    return wait_for_ribbon_control_focus(window, targetControlId);
+}
+
+static BOOL validate_collapsed_style_combo(HWND window, HWND formatBar,
+                                           HWND styleCombo)
+{
+    RECT comboRect;
+    RECT groupRect;
+    HDC dc;
+    int dpiX = 96;
+    int minimumDropWidth;
+    LRESULT count = 0;
+    LRESULT droppedWidth = 0;
+
+    if (window == NULL || formatBar == NULL || styleCombo == NULL ||
+        (GetWindowLongPtrW(styleCombo, GWL_STYLE) & WS_VISIBLE) == 0 ||
+        !GetWindowRect(styleCombo, &comboRect) ||
+        !query_home_group_rect(window, HOME_GROUP_STYLES, &groupRect) ||
+        !send_message_bounded(styleCombo, CB_GETCOUNT, 0, 0, &count) ||
+        !send_message_bounded(styleCombo, CB_GETDROPPEDWIDTH, 0, 0,
+                              &droppedWidth) ||
+        count != WORDCRAFT_STYLE_COUNT) {
+        return FALSE;
+    }
+    MapWindowPoints(HWND_DESKTOP, formatBar, (POINT *)&comboRect, 2);
+    if (comboRect.right <= comboRect.left ||
+        comboRect.bottom <= comboRect.top ||
+        comboRect.left < groupRect.left ||
+        comboRect.right > groupRect.right ||
+        comboRect.top < groupRect.top ||
+        comboRect.bottom > groupRect.bottom) {
+        return FALSE;
+    }
+    dc = GetDC(formatBar);
+    if (dc != NULL) {
+        dpiX = max(1, GetDeviceCaps(dc, LOGPIXELSX));
+        ReleaseDC(formatBar, dc);
+    }
+    minimumDropWidth = MulDiv(180, dpiX, 96);
+    return droppedWidth >= minimumDropWidth &&
+           droppedWidth >= comboRect.right - comboRect.left;
+}
+
+static void expected_next_line_spacing(const PARAFORMAT2 *current,
+                                       BYTE *rule, LONG *spacing)
+{
+    static const BYTE rules[] = {0, 5, 1, 2};
+    static const LONG spacings[] = {0, 23, 0, 0};
+    size_t currentIndex = 0;
+
+    if (current != NULL && (current->dwMask & PFM_LINESPACING) != 0) {
+        for (currentIndex = 0; currentIndex < ARRAYSIZE(rules);
+             ++currentIndex) {
+            if (current->bLineSpacingRule == rules[currentIndex] &&
+                (rules[currentIndex] != 5 ||
+                 current->dyLineSpacing == spacings[currentIndex])) {
+                break;
+            }
+        }
+    }
+    if (currentIndex >= ARRAYSIZE(rules)) {
+        currentIndex = 0;
+    }
+    currentIndex = (currentIndex + 1) % ARRAYSIZE(rules);
+    *rule = rules[currentIndex];
+    *spacing = spacings[currentIndex];
 }
 
 static BOOL ribbon_state_matches(HWND window, int expectedTab)
@@ -635,6 +1238,216 @@ static BOOL wait_for_completion_visibility(HWND window, BOOL visible)
     return FALSE;
 }
 
+static BOOL wait_for_comment_margin(HWND window, LRESULT expectedCount,
+                                    LRESULT expectedActive,
+                                    BOOL requireActiveVisible,
+                                    LRESULT *marginLeft,
+                                    LRESULT *marginWidth)
+{
+    int attempt;
+
+    for (attempt = 0; attempt < 100; ++attempt) {
+        LRESULT visible = 0;
+        LRESULT cardCount = 0;
+        LRESULT active = -1;
+        LRESULT activeVisible = 0;
+        LRESULT left = 0;
+        LRESULT width = 0;
+
+        if (!query_wordcraft_state(window, WCQ_COMMENT_MARGIN_VISIBLE, 0,
+                                   &visible) ||
+            !query_wordcraft_state(window, WCQ_COMMENT_CARD_COUNT, 0,
+                                   &cardCount) ||
+            !query_wordcraft_state(window, WCQ_COMMENT_MARGIN_ACTIVE_INDEX,
+                                   0, &active) ||
+            !query_wordcraft_state(window,
+                                   WCQ_COMMENT_ACTIVE_CARD_VISIBLE, 0,
+                                   &activeVisible) ||
+            !query_wordcraft_state(window, WCQ_COMMENT_MARGIN_LEFT, 0,
+                                   &left) ||
+            !query_wordcraft_state(window, WCQ_COMMENT_MARGIN_WIDTH, 0,
+                                   &width)) {
+            return FALSE;
+        }
+        if (visible != 0 && cardCount == expectedCount &&
+            active == expectedActive && left > 0 && width > 0 &&
+            (!requireActiveVisible || activeVisible != 0)) {
+            if (marginLeft != NULL) {
+                *marginLeft = left;
+            }
+            if (marginWidth != NULL) {
+                *marginWidth = width;
+            }
+            return TRUE;
+        }
+        Sleep(20);
+    }
+    return FALSE;
+}
+
+static BOOL move_ribbon_to_tab(HWND window, HWND ribbonTabs,
+                               int targetTab)
+{
+    LRESULT activeTab = -1;
+    int guard;
+
+    if (ribbonTabs == NULL || targetTab < 0 ||
+        targetTab >= RIBBON_TAB_COUNT ||
+        !query_wordcraft_state(window, WCQ_RIBBON_ACTIVE_TAB, 0,
+                               &activeTab)) {
+        return FALSE;
+    }
+    SetFocus(ribbonTabs);
+    for (guard = 0; guard < RIBBON_TAB_COUNT && activeTab != targetTab;
+         ++guard) {
+        WPARAM key = activeTab < targetTab ? VK_RIGHT : VK_LEFT;
+        if (!send_message_bounded(ribbonTabs, WM_KEYDOWN, key, 0, NULL) ||
+            !query_wordcraft_state(window, WCQ_RIBBON_ACTIVE_TAB, 0,
+                                   &activeTab)) {
+            return FALSE;
+        }
+    }
+    return activeTab == targetTab &&
+           wait_for_ribbon_state(window, targetTab);
+}
+
+static BOOL focus_editor_from_ribbon(HWND window)
+{
+    int attempt;
+
+    for (attempt = 0; attempt < 4; ++attempt) {
+        LRESULT focusArea = RIBBON_FOCUS_OTHER;
+
+        if (!query_wordcraft_state(window, WCQ_RIBBON_FOCUS_AREA, 0,
+                                   &focusArea)) {
+            return FALSE;
+        }
+        if (focusArea == RIBBON_FOCUS_EDITOR) {
+            return TRUE;
+        }
+        if (!send_message_bounded(window, WM_COMMAND,
+                                  MAKEWPARAM(IDM_RIBBON_FOCUS, 0), 0,
+                                  NULL)) {
+            return FALSE;
+        }
+    }
+    return wait_for_ribbon_focus(window, RIBBON_FOCUS_EDITOR);
+}
+
+static BOOL paper_size_state_matches(HWND window, HWND editor,
+                                     HWND paperSizeCombo,
+                                     PaperSizeId expectedId,
+                                     LONG expectedWidth,
+                                     LONG expectedHeight,
+                                     const LRESULT expectedMargins[4],
+                                     LRESULT expectedModified)
+{
+    LRESULT selected = CB_ERR;
+    LRESULT paperId = -1;
+    LRESULT modified = -1;
+    LRESULT storedSize[2] = {0};
+    LRESULT effectiveSize[2] = {0};
+    LRESULT storedMargin[4] = {0};
+    LRESULT effectiveMargin[4] = {0};
+    HDC editorDc;
+    int dpiX;
+    int dpiY;
+    LONG toleranceX;
+    LONG toleranceY;
+    int component;
+    BOOL matches;
+
+    if (window == NULL || editor == NULL || paperSizeCombo == NULL ||
+        expectedMargins == NULL ||
+        !send_message_bounded(paperSizeCombo, CB_GETCURSEL, 0, 0,
+                              &selected) ||
+        !query_wordcraft_state(window, WCQ_PAPER_SIZE_ID, 0, &paperId) ||
+        !send_message_bounded(editor, EM_GETMODIFY, 0, 0, &modified)) {
+        return FALSE;
+    }
+    for (component = 0; component < 2; ++component) {
+        if (!query_wordcraft_state(window, WCQ_PAGE_SIZE_THOUSANDTHS,
+                                   component, &storedSize[component]) ||
+            !query_wordcraft_state(window, WCQ_PAGE_LAYOUT_SIZE_PIXELS,
+                                   component, &effectiveSize[component])) {
+            return FALSE;
+        }
+    }
+    for (component = 0; component < 4; ++component) {
+        if (!query_wordcraft_state(window, WCQ_PAGE_MARGIN_THOUSANDTHS,
+                                   component, &storedMargin[component]) ||
+            !query_wordcraft_state(window, WCQ_PAGE_LAYOUT_MARGIN_PIXELS,
+                                   component, &effectiveMargin[component])) {
+            return FALSE;
+        }
+    }
+
+    editorDc = GetDC(editor);
+    if (editorDc == NULL) {
+        return FALSE;
+    }
+    dpiX = max(1, GetDeviceCaps(editorDc, LOGPIXELSX));
+    dpiY = max(1, GetDeviceCaps(editorDc, LOGPIXELSY));
+    ReleaseDC(editor, editorDc);
+    toleranceX = max(2, dpiX / 48);
+    toleranceY = max(2, dpiY / 48);
+
+    matches = selected == (LRESULT)expectedId &&
+              paperId == (LRESULT)expectedId &&
+              modified == expectedModified &&
+              storedSize[0] == expectedWidth &&
+              storedSize[1] == expectedHeight &&
+              scalar_within_tolerance(
+                  effectiveSize[0], MulDiv(expectedWidth, dpiX, 1000),
+                  toleranceX) &&
+              scalar_within_tolerance(
+                  effectiveSize[1], MulDiv(expectedHeight, dpiY, 1000),
+                  toleranceY);
+    for (component = 0; component < 4; ++component) {
+        int dpi = component == 0 || component == 2 ? dpiX : dpiY;
+        LONG tolerance = component == 0 || component == 2
+                             ? toleranceX
+                             : toleranceY;
+        matches = matches &&
+                  storedMargin[component] == expectedMargins[component] &&
+                  scalar_within_tolerance(
+                      effectiveMargin[component],
+                      MulDiv((LONG)expectedMargins[component], dpi, 1000),
+                      tolerance);
+    }
+    return matches;
+}
+
+static BOOL select_paper_size_and_wait(HWND window, HWND editor,
+                                       HWND paperSizeCombo,
+                                       PaperSizeId id, LONG width,
+                                       LONG height,
+                                       const LRESULT expectedMargins[4],
+                                       LRESULT expectedModified)
+{
+    LRESULT selection = CB_ERR;
+    int attempt;
+
+    if (!send_message_bounded(paperSizeCombo, CB_SETCURSEL, (WPARAM)id, 0,
+                              &selection) ||
+        selection != (LRESULT)id ||
+        !send_message_bounded(
+            window, WM_COMMAND,
+            MAKEWPARAM(IDC_PAPER_SIZE_COMBO, CBN_SELENDOK),
+            (LPARAM)paperSizeCombo, NULL)) {
+        return FALSE;
+    }
+    for (attempt = 0; attempt < 100; ++attempt) {
+        if (paper_size_state_matches(window, editor, paperSizeCombo, id,
+                                     width, height, expectedMargins,
+                                     expectedModified)) {
+            return TRUE;
+        }
+        Sleep(20);
+    }
+    return FALSE;
+}
+
 static BOOL menu_item_is_checked(HMENU menu, UINT command, BOOL checked)
 {
     UINT state;
@@ -768,7 +1581,10 @@ int wmain(void)
     HWND editor;
     HWND longEditor;
     HWND longPageView;
+    HWND longRibbonTabs;
     HWND ribbonTabs;
+    HWND formatBar;
+    HWND paperSizeCombo;
     HWND commentEdit;
     HWND fontCombo;
     HWND sizeCombo;
@@ -788,6 +1604,9 @@ int wmain(void)
     TextEngineSnapshot initialTextEngine;
     TextEngineSnapshot currentTextEngine;
     LRESULT originalModified = 0;
+    LRESULT paperModified = 0;
+    LRESULT paperItemCount = 0;
+    LRESULT paperPresetCount = 0;
     LRESULT pageCount = 0;
     LRESULT currentPage = 0;
     LRESULT nativePage = 0;
@@ -811,11 +1630,32 @@ int wmain(void)
     LRESULT ribbonHash = 0;
     LRESULT commentCount = 0;
     LRESULT activeComment = -1;
+    LRESULT commentMarginVisible = 0;
+    LRESULT commentCardCount = 0;
+    LRESULT commentMarginLeft = 0;
+    LRESULT commentMarginWidth = 0;
+    LRESULT commentCardLeft = 0;
+    LRESULT commentCardTop = 0;
+    LRESULT commentCardRight = 0;
+    LRESULT commentCardBottom = 0;
+    LRESULT commentHighlightVisible = 0;
+    LRESULT commentHighlightStart = -1;
+    LRESULT commentHighlightEnd = -1;
+    LRESULT commentHighlightColor = 0;
+    LRESULT commentCompositionActive = 0;
+    LRESULT storedMargins[4] = {0};
+    LRESULT effectiveMargins[4] = {0};
+    LRESULT storedPageSize[2] = {0};
+    LRESULT effectivePageSize[2] = {0};
+    RECT commentEditorRect;
+    RECT originalWindowRect;
+    POINT commentClickPoint;
     LONG pageIndex;
     int ribbonIndex;
     DWORD probeProcessId = GetCurrentProcessId();
     int result = 1;
 
+    SetProcessDPIAware();
     ZeroMemory(&process, sizeof(process));
     ZeroMemory(&longProcess, sizeof(longProcess));
     sample[0] = L'\0';
@@ -844,9 +1684,80 @@ int wmain(void)
         fwprintf(stderr, L"WordCraft editor control was not created\n");
         goto cleanup;
     }
+    {
+        HDC editorDc = GetDC(editor);
+        int dpiX;
+        int dpiY;
+        LONG toleranceX;
+        LONG toleranceY;
+        int component;
+        BOOL geometryValid = editorDc != NULL;
+
+        if (editorDc != NULL) {
+            dpiX = max(1, GetDeviceCaps(editorDc, LOGPIXELSX));
+            dpiY = max(1, GetDeviceCaps(editorDc, LOGPIXELSY));
+            ReleaseDC(editor, editorDc);
+            toleranceX = max(2, dpiX / 48);
+            toleranceY = max(2, dpiY / 48);
+            for (component = 0; component < 4; ++component) {
+                geometryValid = geometryValid &&
+                    query_wordcraft_state(
+                        window, WCQ_PAGE_MARGIN_THOUSANDTHS, component,
+                        &storedMargins[component]) &&
+                    query_wordcraft_state(
+                        window, WCQ_PAGE_LAYOUT_MARGIN_PIXELS, component,
+                        &effectiveMargins[component]);
+            }
+            for (component = 0; component < 2; ++component) {
+                geometryValid = geometryValid &&
+                    query_wordcraft_state(
+                        window, WCQ_PAGE_SIZE_THOUSANDTHS, component,
+                        &storedPageSize[component]) &&
+                    query_wordcraft_state(
+                        window, WCQ_PAGE_LAYOUT_SIZE_PIXELS, component,
+                        &effectivePageSize[component]);
+            }
+            geometryValid = geometryValid &&
+                storedMargins[0] == 1000 && storedMargins[1] == 1000 &&
+                storedMargins[2] == 1000 && storedMargins[3] == 1000 &&
+                storedPageSize[0] == 8500 && storedPageSize[1] == 11000 &&
+                scalar_within_tolerance(effectiveMargins[0], dpiX,
+                                        toleranceX) &&
+                scalar_within_tolerance(effectiveMargins[1], dpiY,
+                                        toleranceY) &&
+                scalar_within_tolerance(effectiveMargins[2], dpiX,
+                                        toleranceX) &&
+                scalar_within_tolerance(effectiveMargins[3], dpiY,
+                                        toleranceY) &&
+                scalar_within_tolerance(
+                    effectivePageSize[0], MulDiv(8500, dpiX, 1000),
+                    toleranceX) &&
+                scalar_within_tolerance(
+                    effectivePageSize[1], MulDiv(11000, dpiY, 1000),
+                    toleranceY);
+        }
+        if (!geometryValid) {
+            fwprintf(stderr,
+                     L"default page geometry mismatch stored margins=%lld,%lld,%lld,%lld page=%lldx%lld effective margins=%lld,%lld,%lld,%lld page=%lldx%lld\n",
+                     (long long)storedMargins[0],
+                     (long long)storedMargins[1],
+                     (long long)storedMargins[2],
+                     (long long)storedMargins[3],
+                     (long long)storedPageSize[0],
+                     (long long)storedPageSize[1],
+                     (long long)effectiveMargins[0],
+                     (long long)effectiveMargins[1],
+                     (long long)effectiveMargins[2],
+                     (long long)effectiveMargins[3],
+                     (long long)effectivePageSize[0],
+                     (long long)effectivePageSize[1]);
+            goto cleanup;
+        }
+    }
     ribbonTabs = find_control(window, IDC_RIBBON_TABS);
+    formatBar = find_control(window, IDC_FORMAT_BAR);
     commentEdit = find_control(window, IDC_COMMENT_EDIT);
-    if (ribbonTabs == NULL || commentEdit == NULL ||
+    if (ribbonTabs == NULL || formatBar == NULL || commentEdit == NULL ||
         !query_wordcraft_state(window, WCQ_RIBBON_TAB_COUNT, 0,
                                &ribbonCount) ||
         ribbonCount != RIBBON_TAB_COUNT ||
@@ -866,6 +1777,57 @@ int wmain(void)
                      ribbonIndex, expectedRibbonTabNames[ribbonIndex]);
             goto cleanup;
         }
+    }
+    if (!GetWindowRect(window, &originalWindowRect)) {
+        fwprintf(stderr, L"could not capture the initial ribbon window size\n");
+        goto cleanup;
+    }
+    if (!resize_window_for_home_layout(window, 1320, RIBBON_LAYOUT_FULL,
+                                       NULL) ||
+        !validate_home_layout_contract(window, formatBar,
+                                       RIBBON_LAYOUT_FULL)) {
+        fwprintf(stderr, L"the full Home ribbon layout contract failed\n");
+        goto cleanup;
+    }
+    if (!force_home_group_paint(window, formatBar)) {
+        fwprintf(stderr, L"the Home ribbon group dividers were not painted\n");
+        goto cleanup;
+    }
+    {
+        HWND collapsedStyleCombo = find_control(formatBar,
+                                                IDC_HOME_STYLE_COMBO);
+        if (collapsedStyleCombo == NULL ||
+            !focus_home_control(window, formatBar,
+                                IDM_STYLE_HEADING_1)) {
+            fwprintf(stderr,
+                     L"the full Home gallery could not focus Heading 1\n");
+            goto cleanup;
+        }
+        if (!resize_window_for_home_layout(window, 640,
+                                           RIBBON_LAYOUT_COLLAPSED, NULL) ||
+            !validate_home_layout_contract(window, formatBar,
+                                           RIBBON_LAYOUT_COLLAPSED) ||
+            !validate_collapsed_style_combo(window, formatBar,
+                                            collapsedStyleCombo) ||
+            !wait_for_ribbon_control_focus(window,
+                                           IDC_HOME_STYLE_COMBO)) {
+            fwprintf(stderr,
+                     L"the collapsed Home layout, style selector, or hidden-control focus fallback failed\n");
+            goto cleanup;
+        }
+    }
+    if (!resize_window_for_home_layout(window, 960, RIBBON_LAYOUT_COMPACT,
+                                       NULL) ||
+        !validate_home_layout_contract(window, formatBar,
+                                       RIBBON_LAYOUT_COMPACT)) {
+        fwprintf(stderr, L"the compact Home ribbon layout contract failed\n");
+        goto cleanup;
+    }
+    if (!restore_window_size(window, &originalWindowRect) ||
+        !focus_editor_from_ribbon(window)) {
+        fwprintf(stderr,
+                 L"the Home ribbon probe could not restore its initial size and editor focus\n");
+        goto cleanup;
     }
     if (!send_message_bounded(window, WM_COMMAND,
                               MAKEWPARAM(IDM_RIBBON_FOCUS, 0), 0, NULL) ||
@@ -905,10 +1867,89 @@ int wmain(void)
         !wait_for_ribbon_focus(window, RIBBON_FOCUS_PANEL) ||
         !send_message_bounded(window, WM_COMMAND,
                               MAKEWPARAM(IDM_RIBBON_FOCUS, 0), 0, NULL) ||
-        !wait_for_ribbon_focus(window, RIBBON_FOCUS_EDITOR)) {
+        !wait_for_ribbon_focus(window, RIBBON_FOCUS_EDITOR) ||
+        !query_wordcraft_state(window,
+                               WCQ_COMMENT_COMPOSITION_ACTIVE, 0,
+                               &commentCompositionActive) ||
+        !query_wordcraft_state(window,
+                               WCQ_COMMENT_HIGHLIGHT_VISIBLE, 0,
+                               &commentHighlightVisible) ||
+        commentCompositionActive != 0 || commentHighlightVisible != 0) {
+        LRESULT diagnosticFocus = -1;
+        LRESULT diagnosticTab = -1;
+        LRESULT diagnosticComposition = -1;
+        LRESULT diagnosticHighlight = -1;
+        query_wordcraft_state(window, WCQ_RIBBON_FOCUS_AREA, 0,
+                              &diagnosticFocus);
+        query_wordcraft_state(window, WCQ_RIBBON_ACTIVE_TAB, 0,
+                              &diagnosticTab);
+        query_wordcraft_state(window, WCQ_COMMENT_COMPOSITION_ACTIVE, 0,
+                              &diagnosticComposition);
+        query_wordcraft_state(window, WCQ_COMMENT_HIGHLIGHT_VISIBLE, 0,
+                              &diagnosticHighlight);
         fwprintf(stderr,
-                 L"ribbon focus cycling or empty New Comment activation failed\n");
+                 L"ribbon focus cycling or abandoned comment-draft cleanup failed "
+                 L"(focus=%ld tab=%ld composition=%ld highlight=%ld)\n",
+                 (long)diagnosticFocus, (long)diagnosticTab,
+                 (long)diagnosticComposition, (long)diagnosticHighlight);
         goto cleanup;
+    }
+    paperSizeCombo = find_control(window, IDC_PAPER_SIZE_COMBO);
+    if (paperSizeCombo == NULL ||
+        !send_message_bounded(paperSizeCombo, CB_GETCOUNT, 0, 0,
+                              &paperItemCount) ||
+        !query_wordcraft_state(window, WCQ_PAPER_SIZE_COUNT, 0,
+                               &paperPresetCount) ||
+        !send_message_bounded(editor, EM_GETMODIFY, 0, 0,
+                              &paperModified) ||
+        paperItemCount != PAPER_SIZE_COUNT ||
+        paperPresetCount != PAPER_SIZE_COUNT ||
+        !move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_LAYOUT) ||
+        (GetWindowLongPtrW(paperSizeCombo, GWL_STYLE) & WS_VISIBLE) == 0 ||
+        !paper_size_state_matches(
+            window, editor, paperSizeCombo, PAPER_SIZE_LETTER,
+            8500, 11000, storedMargins, paperModified)) {
+        fwprintf(stderr,
+                 L"the Layout paper-size selector did not expose all 25 presets with Letter selected\n");
+        goto cleanup;
+    }
+    if (!select_paper_size_and_wait(
+            window, editor, paperSizeCombo, PAPER_SIZE_A4,
+            8268, 11693, storedMargins, paperModified) ||
+        !select_paper_size_and_wait(
+            window, editor, paperSizeCombo, PAPER_SIZE_LEDGER,
+            17000, 11000, storedMargins, paperModified) ||
+        !select_paper_size_and_wait(
+            window, editor, paperSizeCombo, PAPER_SIZE_E_SHEET,
+            34000, 44000, storedMargins, paperModified) ||
+        !select_paper_size_and_wait(
+            window, editor, paperSizeCombo, PAPER_SIZE_LETTER,
+            8500, 11000, storedMargins, paperModified)) {
+        fwprintf(stderr,
+                 L"A4, Ledger, E Sheet, or restored Letter paper geometry did not match the Layout selection\n");
+        goto cleanup;
+    }
+    /* Keep all established pagination and scrolling expectations on the
+     * application's default Letter geometry. */
+    if (!move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_HOME) ||
+        !focus_editor_from_ribbon(window)) {
+        fwprintf(stderr,
+                 L"the paper-size probe could not restore Home/editor focus\n");
+        goto cleanup;
+    }
+    {
+        LRESULT firstTabstop = 0;
+        if (!first_enabled_home_tabstop(window, &firstTabstop) ||
+            !PostMessageW(editor, WM_KEYDOWN, VK_F6, 1) ||
+            !wait_for_ribbon_focus(window, RIBBON_FOCUS_TABS) ||
+            !PostMessageW(ribbonTabs, WM_KEYDOWN, VK_TAB, 1) ||
+            !wait_for_ribbon_focus(window, RIBBON_FOCUS_PANEL) ||
+            !wait_for_ribbon_control_focus(window, firstTabstop) ||
+            !focus_editor_from_ribbon(window)) {
+            fwprintf(stderr,
+                     L"queued F6/Tab did not enter the first enabled Home control and return to the editor\n");
+            goto cleanup;
+        }
     }
     fontCombo = find_control(window, IDC_FONT_COMBO);
     sizeCombo = find_control(window, IDC_SIZE_COMBO);
@@ -1158,7 +2199,9 @@ int wmain(void)
     }
     longEditor = find_control(longWindow, IDC_EDITOR);
     longPageView = longEditor != NULL ? GetParent(longEditor) : NULL;
-    if (longEditor == NULL || longPageView == NULL) {
+    longRibbonTabs = find_control(longWindow, IDC_RIBBON_TABS);
+    if (longEditor == NULL || longPageView == NULL ||
+        longRibbonTabs == NULL) {
         fwprintf(stderr, L"long-document editor control was not created\n");
         goto cleanup;
     }
@@ -1573,18 +2616,45 @@ int wmain(void)
                                &commentCount) ||
         !query_wordcraft_state(longWindow, WCQ_COMMENT_ACTIVE_INDEX, 0,
                                &activeComment) ||
+        !query_wordcraft_state(longWindow, WCQ_COMMENT_MARGIN_VISIBLE, 0,
+                               &commentMarginVisible) ||
+        !query_wordcraft_state(longWindow, WCQ_COMMENT_CARD_COUNT, 0,
+                               &commentCardCount) ||
         commentCount != 0 || activeComment != -1 ||
+        commentMarginVisible != 0 || commentCardCount != 0 ||
+        !send_message_bounded(longEditor, EM_SETSEL, 0, 3, NULL) ||
         !send_message_bounded(longWindow, WM_COMMAND,
                               MAKEWPARAM(IDM_REVIEW_ADD_COMMENT, 0), 0,
                               NULL) ||
         !wait_for_ribbon_state(longWindow, RIBBON_TAB_REVIEW) ||
-        !wait_for_ribbon_focus(longWindow, RIBBON_FOCUS_PANEL)) {
+        !wait_for_ribbon_focus(longWindow, RIBBON_FOCUS_PANEL) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_COMPOSITION_ACTIVE, 0,
+                               &commentCompositionActive) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_VISIBLE, 0,
+                               &commentHighlightVisible) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_START, 0,
+                               &commentHighlightStart) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_END, 0,
+                               &commentHighlightEnd) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_COLOR, 0,
+                               &commentHighlightColor) ||
+        !send_message_bounded(longEditor, EM_GETMODIFY, 0, 0,
+                              &longModified) ||
+        commentCompositionActive != 1 || commentHighlightVisible != 1 ||
+        commentHighlightStart != 0 || commentHighlightEnd != 3 ||
+        (COLORREF)commentHighlightColor !=
+            WORDCRAFT_COMMENT_HIGHLIGHT_COLOR || longModified != 0) {
         fwprintf(stderr,
-                 L"a comment-free RTF did not expose the Review ribbon editor correctly\n");
+                 L"a selected comment draft was not highlighted temporarily "
+                 L"without modifying the RTF\n");
         goto cleanup;
     }
-    if (!send_message_bounded(longEditor, EM_SETSEL, 0, 3, NULL) ||
-        !send_message_bounded(commentEdit, WM_SETTEXT, 0,
+    if (!send_message_bounded(commentEdit, WM_SETTEXT, 0,
                               (LPARAM)firstCommentText, NULL) ||
         !send_message_bounded(longWindow, WM_COMMAND,
                               MAKEWPARAM(IDM_REVIEW_ADD_COMMENT, 0), 0,
@@ -1593,13 +2663,147 @@ int wmain(void)
                                &commentCount) ||
         !query_wordcraft_state(longWindow, WCQ_COMMENT_ACTIVE_INDEX, 0,
                                &activeComment) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_COMPOSITION_ACTIVE, 0,
+                               &commentCompositionActive) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_VISIBLE, 0,
+                               &commentHighlightVisible) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_START, 0,
+                               &commentHighlightStart) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_END, 0,
+                               &commentHighlightEnd) ||
         commentCount != 1 || activeComment != 0 ||
+        commentCompositionActive != 0 || commentHighlightVisible != 1 ||
+        commentHighlightStart != 0 || commentHighlightEnd != 3 ||
         !comment_matches(longWindow, 0, 0, 3, firstCommentText) ||
         !send_message_bounded(longEditor, WM_GETTEXTLENGTH, 0, 0,
                               &currentPage) ||
         currentPage != longTextLength) {
         fwprintf(stderr,
                  L"adding the first anchored Unicode comment failed or changed document text\n");
+        goto cleanup;
+    }
+    /* Give the hidden probe enough width to expose the entire page and rail;
+     * real narrow windows reach the same cards with the horizontal bar. */
+    if (!SetWindowPos(longWindow, NULL, 0, 0, 2200, 1200,
+                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)) {
+        fwprintf(stderr, L"could not resize the side-comment probe window\n");
+        goto cleanup;
+    }
+    if (!wait_for_comment_margin(longWindow, 1, 0, TRUE,
+                                 &commentMarginLeft,
+                                 &commentMarginWidth) ||
+        !GetWindowRect(longEditor, &commentEditorRect)) {
+        fwprintf(stderr,
+                 L"the first comment did not create a visible side-by-side card rail\n");
+        goto cleanup;
+    }
+    MapWindowPoints(HWND_DESKTOP, longPageView,
+                    (POINT *)&commentEditorRect, 2);
+    if (commentMarginLeft <= commentEditorRect.right ||
+        commentMarginWidth < 180) {
+        fwprintf(stderr,
+                 L"the comment rail was not positioned beside the page (page_right=%ld rail_left=%lld width=%lld)\n",
+                 commentEditorRect.right, (long long)commentMarginLeft,
+                 (long long)commentMarginWidth);
+        goto cleanup;
+    }
+    if (!move_ribbon_to_tab(longWindow, longRibbonTabs, RIBBON_TAB_HOME) ||
+        !wait_for_comment_margin(longWindow, 1, 0, TRUE, NULL, NULL)) {
+        fwprintf(stderr,
+                 L"the side comment rail disappeared after leaving the Review ribbon\n");
+        goto cleanup;
+    }
+    if (!send_message_bounded(longWindow, WM_COMMAND,
+                              MAKEWPARAM(IDM_VIEW_DARK_MODE, 0), 0, NULL) ||
+        !query_wordcraft_state(longWindow, WCQ_DARK_MODE, 0, &darkMode) ||
+        darkMode != 1 ||
+        !wait_for_comment_margin(longWindow, 1, 0, TRUE, NULL, NULL) ||
+        !send_message_bounded(longWindow, WM_COMMAND,
+                              MAKEWPARAM(IDM_VIEW_DARK_MODE, 0), 0, NULL) ||
+        !query_wordcraft_state(longWindow, WCQ_DARK_MODE, 0, &darkMode) ||
+        darkMode != 0 ||
+        !wait_for_comment_margin(longWindow, 1, 0, TRUE, NULL, NULL) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_VISIBLE, 0,
+                               &commentHighlightVisible) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_START, 0,
+                               &commentHighlightStart) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_END, 0,
+                               &commentHighlightEnd) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_COLOR, 0,
+                               &commentHighlightColor) ||
+        commentHighlightVisible != 1 || commentHighlightStart != 0 ||
+        commentHighlightEnd != 3 ||
+        (COLORREF)commentHighlightColor !=
+            WORDCRAFT_COMMENT_HIGHLIGHT_COLOR) {
+        fwprintf(stderr,
+                 L"the side comment rail or temporary yellow highlight did not "
+                 L"survive a dark-mode round trip\n");
+        goto cleanup;
+    }
+    if (!send_message_bounded(longEditor, EM_SETSEL, 10, 10, NULL) ||
+        !wait_for_comment_margin(longWindow, 1, 0, TRUE, NULL, NULL) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_VISIBLE, 0,
+                               &commentHighlightVisible) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_START, 0,
+                               &commentHighlightStart) ||
+        commentHighlightVisible != 0 || commentHighlightStart != -1 ||
+        !query_wordcraft_state(longWindow, WCQ_COMMENT_ACTIVE_CARD_LEFT, 0,
+                               &commentCardLeft) ||
+        !query_wordcraft_state(longWindow, WCQ_COMMENT_ACTIVE_CARD_TOP, 0,
+                               &commentCardTop) ||
+        !query_wordcraft_state(longWindow, WCQ_COMMENT_ACTIVE_CARD_RIGHT, 0,
+                               &commentCardRight) ||
+        !query_wordcraft_state(longWindow, WCQ_COMMENT_ACTIVE_CARD_BOTTOM, 0,
+                               &commentCardBottom) ||
+        commentCardLeft < commentMarginLeft ||
+        commentCardRight > commentMarginLeft + commentMarginWidth ||
+        commentCardRight <= commentCardLeft ||
+        commentCardBottom <= commentCardTop) {
+        fwprintf(stderr,
+                 L"the active side comment card did not expose valid page-view geometry\n");
+        goto cleanup;
+    }
+    /* The hidden test window can require horizontal scrolling; click the
+     * visible leading edge of the card rather than an off-viewport center. */
+    commentClickPoint.x = (LONG)min(commentCardRight - 1,
+                                    commentCardLeft + 10);
+    commentClickPoint.y = (LONG)((commentCardTop + commentCardBottom) / 2);
+    if (!send_message_bounded(longPageView, WM_LBUTTONDOWN, MK_LBUTTON,
+                              MAKELPARAM(commentClickPoint.x,
+                                         commentClickPoint.y), NULL) ||
+        !get_selection_bounded(longEditor, &selectionStart, &selectionEnd) ||
+        !query_wordcraft_state(longWindow, WCQ_COMMENT_ACTIVE_INDEX, 0,
+                               &activeComment) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_VISIBLE, 0,
+                               &commentHighlightVisible) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_START, 0,
+                               &commentHighlightStart) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_END, 0,
+                               &commentHighlightEnd) ||
+        selectionStart != 0 || selectionEnd != 3 || activeComment != 0 ||
+        commentHighlightVisible != 1 || commentHighlightStart != 0 ||
+        commentHighlightEnd != 3) {
+        fwprintf(stderr,
+                 L"clicking a side comment card did not select its anchored text "
+                 L"(card=%lld,%lld..%lld,%lld click=%ld,%ld selection=%lu..%lu active=%lld)\n",
+                 (long long)commentCardLeft, (long long)commentCardTop,
+                 (long long)commentCardRight, (long long)commentCardBottom,
+                 commentClickPoint.x, commentClickPoint.y,
+                 (unsigned long)selectionStart,
+                 (unsigned long)selectionEnd, (long long)activeComment);
         goto cleanup;
     }
     if (!send_message_bounded(longEditor, EM_SETSEL,
@@ -1614,12 +2818,25 @@ int wmain(void)
                                &commentCount) ||
         !query_wordcraft_state(longWindow, WCQ_COMMENT_ACTIVE_INDEX, 0,
                                &activeComment) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_START, 0,
+                               &commentHighlightStart) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_END, 0,
+                               &commentHighlightEnd) ||
         commentCount != 2 || activeComment != 1 ||
+        commentHighlightStart != secondPageStart + 5 ||
+        commentHighlightEnd != secondPageStart + 12 ||
         !comment_matches(longWindow, 0, 0, 3, firstCommentText) ||
         !comment_matches(longWindow, 1, (LONG)secondPageStart + 5,
                          (LONG)secondPageStart + 12, secondCommentText)) {
         fwprintf(stderr,
                  L"adding a second page-anchored comment failed\n");
+        goto cleanup;
+    }
+    if (!wait_for_comment_margin(longWindow, 2, 1, TRUE, NULL, NULL)) {
+        fwprintf(stderr,
+                 L"the second page comment did not appear as the active side card\n");
         goto cleanup;
     }
     if (!send_message_bounded(longWindow, WM_COMMAND,
@@ -1628,16 +2845,31 @@ int wmain(void)
         !query_wordcraft_state(longWindow, WCQ_COMMENT_ACTIVE_INDEX, 0,
                                &activeComment) ||
         !get_selection_bounded(longEditor, &selectionStart, &selectionEnd) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_START, 0,
+                               &commentHighlightStart) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_END, 0,
+                               &commentHighlightEnd) ||
         activeComment != 0 || selectionStart != 0 || selectionEnd != 3 ||
+        commentHighlightStart != 0 || commentHighlightEnd != 3 ||
         !send_message_bounded(longWindow, WM_COMMAND,
                               MAKEWPARAM(IDM_REVIEW_NEXT_COMMENT, 0), 0,
                               NULL) ||
         !query_wordcraft_state(longWindow, WCQ_COMMENT_ACTIVE_INDEX, 0,
                                &activeComment) ||
         !get_selection_bounded(longEditor, &selectionStart, &selectionEnd) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_START, 0,
+                               &commentHighlightStart) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_END, 0,
+                               &commentHighlightEnd) ||
         activeComment != 1 ||
         selectionStart != (DWORD)(secondPageStart + 5) ||
-        selectionEnd != (DWORD)(secondPageStart + 12)) {
+        selectionEnd != (DWORD)(secondPageStart + 12) ||
+        commentHighlightStart != secondPageStart + 5 ||
+        commentHighlightEnd != secondPageStart + 12) {
         fwprintf(stderr,
                  L"Previous/Next Comment did not navigate to the stored anchors\n");
         goto cleanup;
@@ -1649,7 +2881,11 @@ int wmain(void)
                                &commentCount) ||
         !query_wordcraft_state(longWindow, WCQ_COMMENT_ACTIVE_INDEX, 0,
                                &activeComment) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_VISIBLE, 0,
+                               &commentHighlightVisible) ||
         commentCount != 1 || activeComment != 0 ||
+        commentHighlightVisible != 0 ||
         !comment_matches(longWindow, 0, 0, 3, firstCommentText) ||
         !send_message_bounded(longEditor, WM_GETTEXTLENGTH, 0, 0,
                               &currentPage) ||
@@ -1657,6 +2893,389 @@ int wmain(void)
         fwprintf(stderr,
                  L"Delete Comment did not remove only the active comment\n");
         goto cleanup;
+    }
+    if (!wait_for_comment_margin(longWindow, 1, 0, FALSE, NULL, NULL)) {
+        fwprintf(stderr,
+                 L"deleting one comment removed or desynchronized the side rail\n");
+        goto cleanup;
+    }
+    if (!send_message_bounded(longWindow, WM_COMMAND,
+                              MAKEWPARAM(IDM_REVIEW_DELETE_COMMENT, 0), 0,
+                              NULL) ||
+        !query_wordcraft_state(longWindow, WCQ_COMMENT_COUNT, 0,
+                               &commentCount) ||
+        !query_wordcraft_state(longWindow, WCQ_COMMENT_MARGIN_VISIBLE, 0,
+                               &commentMarginVisible) ||
+        !query_wordcraft_state(longWindow, WCQ_COMMENT_CARD_COUNT, 0,
+                               &commentCardCount) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_MARGIN_ACTIVE_INDEX, 0,
+                               &activeComment) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_VISIBLE, 0,
+                               &commentHighlightVisible) ||
+        commentCount != 0 || commentMarginVisible != 0 ||
+        commentCardCount != 0 || activeComment != -1 ||
+        commentHighlightVisible != 0) {
+        fwprintf(stderr,
+                 L"the side comment rail did not collapse after deleting the last comment\n");
+        goto cleanup;
+    }
+    if (!send_message_bounded(longEditor, EM_SETSEL, 0, 3, NULL) ||
+        !send_message_bounded(commentEdit, WM_SETTEXT, 0,
+                              (LPARAM)firstCommentText, NULL) ||
+        !send_message_bounded(longWindow, WM_COMMAND,
+                              MAKEWPARAM(IDM_REVIEW_ADD_COMMENT, 0), 0,
+                              NULL) ||
+        !wait_for_comment_margin(longWindow, 1, 0, TRUE, NULL, NULL) ||
+        !comment_matches(longWindow, 0, 0, 3, firstCommentText)) {
+        fwprintf(stderr,
+                 L"the side comment rail did not return after re-adding a comment\n");
+        goto cleanup;
+    }
+    {
+        const LONG partialStart = 3;
+        const LONG partialEnd = 8;
+        const LONG firstOutsideStart = 24;
+        WCHAR textBefore[256];
+        WCHAR textAfter[256];
+        CHARFORMAT2W firstCharacterBefore;
+        CHARFORMAT2W firstCharacterAfter;
+        CHARFORMAT2W secondCharacterBefore;
+        CHARFORMAT2W secondCharacterAfter;
+        PARAFORMAT2 firstParagraphBefore;
+        PARAFORMAT2 firstParagraphAfter;
+        PARAFORMAT2 secondParagraphBefore;
+        PARAFORMAT2 secondParagraphAfter;
+        LRESULT textLengthBefore = 0;
+        LRESULT textLengthAfter = 0;
+        LRESULT canUndo = 0;
+        LONG secondParagraphStart = -1;
+        DWORD rangeStart = 0;
+        DWORD rangeEnd = 0;
+
+        ZeroMemory(textBefore, sizeof(textBefore));
+        ZeroMemory(textAfter, sizeof(textAfter));
+        if (!find_text_bounded(longEditor, longProcess.hProcess,
+                               L"Pagination probe line 0002",
+                               &secondParagraphStart) ||
+            secondParagraphStart <= firstOutsideStart + 6 ||
+            !send_message_bounded(longEditor, EM_SETSEL, partialEnd,
+                                  partialStart, NULL) ||
+            !send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_STYLE_NORMAL, 0), 0,
+                                  NULL) ||
+            !send_message_bounded(longEditor, EM_EMPTYUNDOBUFFER, 0, 0,
+                                  NULL) ||
+            !send_message_bounded(longEditor, WM_GETTEXTLENGTH, 0, 0,
+                                  &textLengthBefore) ||
+            !get_window_text_bounded(longEditor, textBefore,
+                                     ARRAYSIZE(textBefore))) {
+            fwprintf(stderr,
+                     L"could not prepare the partial-paragraph style undo probe\n");
+            goto cleanup;
+        }
+
+        if (!send_message_bounded(longEditor, EM_SETSEL,
+                                  firstOutsideStart,
+                                  firstOutsideStart + 6, NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &firstCharacterBefore) ||
+            !get_paragraph_format_bounded(longEditor, longProcess.hProcess,
+                                          &firstParagraphBefore) ||
+            !send_message_bounded(longEditor, EM_SETSEL,
+                                  secondParagraphStart + 3,
+                                  secondParagraphStart + 9, NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &secondCharacterBefore) ||
+            !get_paragraph_format_bounded(longEditor, longProcess.hProcess,
+                                          &secondParagraphBefore) ||
+            !send_message_bounded(longEditor, EM_SETSEL, partialEnd,
+                                  partialStart, NULL) ||
+            !get_selection_bounded(longEditor, &rangeStart, &rangeEnd) ||
+            rangeStart != (DWORD)partialStart ||
+            rangeEnd != (DWORD)partialEnd) {
+            fwprintf(stderr,
+                     L"could not establish a backward partial-paragraph selection\n");
+            goto cleanup;
+        }
+
+        if (!send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_STYLE_HEADING_1, 0), 0,
+                                  NULL) ||
+            !get_selection_bounded(longEditor, &rangeStart, &rangeEnd) ||
+            rangeStart != (DWORD)partialStart ||
+            rangeEnd != (DWORD)partialEnd ||
+            !send_message_bounded(longEditor, EM_CANUNDO, 0, 0,
+                                  &canUndo) ||
+            canUndo == 0) {
+            fwprintf(stderr,
+                     L"Heading 1 did not preserve the partial selection or create an undo transaction\n");
+            goto cleanup;
+        }
+
+        if (!send_message_bounded(longEditor, EM_SETSEL,
+                                  firstOutsideStart,
+                                  firstOutsideStart + 6, NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &firstCharacterAfter) ||
+            !get_paragraph_format_bounded(longEditor, longProcess.hProcess,
+                                          &firstParagraphAfter) ||
+            firstCharacterAfter.yHeight != 320 ||
+            (firstCharacterAfter.dwEffects & CFE_BOLD) == 0 ||
+            firstCharacterAfter.crTextColor != RGB(37, 76, 132) ||
+            firstParagraphAfter.wAlignment != PFA_LEFT ||
+            firstParagraphAfter.dySpaceBefore != 240 ||
+            firstParagraphAfter.dySpaceAfter != 60 ||
+            !send_message_bounded(longEditor, EM_SETSEL,
+                                  secondParagraphStart + 3,
+                                  secondParagraphStart + 9, NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &secondCharacterAfter) ||
+            !get_paragraph_format_bounded(longEditor, longProcess.hProcess,
+                                          &secondParagraphAfter) ||
+            !character_formats_match(&secondCharacterBefore,
+                                     &secondCharacterAfter) ||
+            !paragraph_formats_match(&secondParagraphBefore,
+                                     &secondParagraphAfter)) {
+            fwprintf(stderr,
+                     L"a partial Heading 1 selection did not expand to exactly one paragraph\n");
+            goto cleanup;
+        }
+
+        if (!send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_EDIT_UNDO, 0), 0, NULL) ||
+            !send_message_bounded(longEditor, EM_CANUNDO, 0, 0,
+                                  &canUndo) ||
+            canUndo != 0 ||
+            !send_message_bounded(longEditor, EM_SETSEL,
+                                  firstOutsideStart,
+                                  firstOutsideStart + 6, NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &firstCharacterAfter) ||
+            !get_paragraph_format_bounded(longEditor, longProcess.hProcess,
+                                          &firstParagraphAfter) ||
+            !character_formats_match(&firstCharacterBefore,
+                                     &firstCharacterAfter) ||
+            !paragraph_formats_match(&firstParagraphBefore,
+                                     &firstParagraphAfter) ||
+            !send_message_bounded(longEditor, EM_SETSEL,
+                                  secondParagraphStart + 3,
+                                  secondParagraphStart + 9, NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &secondCharacterAfter) ||
+            !get_paragraph_format_bounded(longEditor, longProcess.hProcess,
+                                          &secondParagraphAfter) ||
+            !character_formats_match(&secondCharacterBefore,
+                                     &secondCharacterAfter) ||
+            !paragraph_formats_match(&secondParagraphBefore,
+                                     &secondParagraphAfter) ||
+            !send_message_bounded(longEditor, WM_GETTEXTLENGTH, 0, 0,
+                                  &textLengthAfter) ||
+            !get_window_text_bounded(longEditor, textAfter,
+                                     ARRAYSIZE(textAfter)) ||
+            textLengthAfter != textLengthBefore ||
+            wcscmp(textAfter, textBefore) != 0) {
+            fwprintf(stderr,
+                     L"one Undo did not atomically restore both parts of the paragraph style\n");
+            goto cleanup;
+        }
+    }
+    {
+        const DWORD scriptEffects = CFE_SUBSCRIPT | CFE_SUPERSCRIPT;
+        const DWORD styleCharacterMask =
+            CFM_FACE | CFM_SIZE | CFM_BOLD | CFM_COLOR;
+        const DWORD styleParagraphMask =
+            PFM_ALIGNMENT | PFM_NUMBERING | PFM_SPACEBEFORE |
+            PFM_SPACEAFTER | PFM_LINESPACING;
+        CHARFORMAT2W character;
+        PARAFORMAT2 paragraphBefore;
+        PARAFORMAT2 paragraphAfter;
+        LONG originalSize;
+        BYTE expectedSpacingRule;
+        LONG expectedSpacing;
+
+        ZeroMemory(&character, sizeof(character));
+        if (!send_message_bounded(longEditor, EM_SETSEL, 0, 3, NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &character) ||
+            (character.dwMask & CFM_SIZE) == 0 ||
+            character.yHeight <= 0) {
+            fwprintf(stderr,
+                     L"could not capture a uniform selection for the expanded Font commands\n");
+            goto cleanup;
+        }
+        originalSize = character.yHeight;
+        if (!send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_FORMAT_GROW_FONT, 0), 0,
+                                  NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &character) ||
+            (character.dwMask & CFM_SIZE) == 0 ||
+            character.yHeight <= originalSize ||
+            !send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_FORMAT_SHRINK_FONT, 0), 0,
+                                  NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &character) ||
+            (character.dwMask & CFM_SIZE) == 0 ||
+            character.yHeight != originalSize) {
+            fwprintf(stderr,
+                     L"Grow Font and Shrink Font did not make a reversible size change\n");
+            goto cleanup;
+        }
+
+        if (!send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_FORMAT_SUBSCRIPT, 0), 0,
+                                  NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &character) ||
+            (character.dwMask & CFM_SUBSCRIPT) != CFM_SUBSCRIPT ||
+            (character.dwEffects & scriptEffects) != CFE_SUBSCRIPT ||
+            !send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_FORMAT_SUPERSCRIPT, 0), 0,
+                                  NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &character) ||
+            (character.dwMask & CFM_SUBSCRIPT) != CFM_SUBSCRIPT ||
+            (character.dwEffects & scriptEffects) != CFE_SUPERSCRIPT ||
+            !send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_FORMAT_SUPERSCRIPT, 0), 0,
+                                  NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &character) ||
+            (character.dwEffects & scriptEffects) != 0) {
+            fwprintf(stderr,
+                     L"Subscript and Superscript were not mutually exclusive toggles\n");
+            goto cleanup;
+        }
+
+        if (!send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_FORMAT_HIGHLIGHT, 0), 0,
+                                  NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &character) ||
+            (character.dwMask & CFM_BACKCOLOR) == 0 ||
+            (character.dwEffects & CFE_AUTOBACKCOLOR) != 0 ||
+            character.crBackColor != RGB(255, 235, 92) ||
+            !send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_FORMAT_HIGHLIGHT, 0), 0,
+                                  NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &character) ||
+            (character.dwMask & CFM_BACKCOLOR) == 0 ||
+            (character.dwEffects & CFE_AUTOBACKCOLOR) == 0) {
+            fwprintf(stderr,
+                     L"Highlight did not toggle the expected yellow character background\n");
+            goto cleanup;
+        }
+
+        ZeroMemory(&paragraphAfter, sizeof(paragraphAfter));
+        if (!send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_FORMAT_NUMBERING, 0), 0,
+                                  NULL) ||
+            !get_paragraph_format_bounded(longEditor, longProcess.hProcess,
+                                          &paragraphAfter) ||
+            (paragraphAfter.dwMask &
+             (PFM_NUMBERING | PFM_NUMBERINGSTYLE)) !=
+                (PFM_NUMBERING | PFM_NUMBERINGSTYLE) ||
+            paragraphAfter.wNumbering != PFN_ARABIC ||
+            paragraphAfter.wNumberingStyle != PFNS_PERIOD ||
+            !send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_FORMAT_NUMBERING, 0), 0,
+                                  NULL) ||
+            !get_paragraph_format_bounded(longEditor, longProcess.hProcess,
+                                          &paragraphAfter) ||
+            (paragraphAfter.dwMask & PFM_NUMBERING) == 0 ||
+            paragraphAfter.wNumbering != 0) {
+            fwprintf(stderr,
+                     L"Numbered List did not apply and remove Arabic paragraph numbering\n");
+            goto cleanup;
+        }
+
+        ZeroMemory(&paragraphBefore, sizeof(paragraphBefore));
+        if (!get_paragraph_format_bounded(longEditor, longProcess.hProcess,
+                                          &paragraphBefore)) {
+            fwprintf(stderr,
+                     L"could not capture paragraph spacing before cycling it\n");
+            goto cleanup;
+        }
+        expected_next_line_spacing(&paragraphBefore, &expectedSpacingRule,
+                                   &expectedSpacing);
+        if (!send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_FORMAT_LINE_SPACING, 0), 0,
+                                  NULL) ||
+            !get_paragraph_format_bounded(longEditor, longProcess.hProcess,
+                                          &paragraphAfter) ||
+            (paragraphAfter.dwMask & PFM_LINESPACING) == 0 ||
+            paragraphAfter.bLineSpacingRule != expectedSpacingRule ||
+            paragraphAfter.dyLineSpacing != expectedSpacing) {
+            fwprintf(stderr,
+                     L"Line Spacing did not advance to the next documented spacing state\n");
+            goto cleanup;
+        }
+
+        if (!send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_STYLE_HEADING_1, 0), 0,
+                                  NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &character) ||
+            !get_paragraph_format_bounded(longEditor, longProcess.hProcess,
+                                          &paragraphAfter) ||
+            (character.dwMask & styleCharacterMask) != styleCharacterMask ||
+            character.yHeight != 320 ||
+            (character.dwEffects & CFE_BOLD) == 0 ||
+            character.crTextColor != RGB(37, 76, 132) ||
+            lstrcmpW(character.szFaceName,
+                     WORDCRAFT_DEFAULT_FONT_FACE) != 0 ||
+            (paragraphAfter.dwMask & styleParagraphMask) !=
+                styleParagraphMask ||
+            paragraphAfter.wAlignment != PFA_LEFT ||
+            paragraphAfter.wNumbering != 0 ||
+            paragraphAfter.dySpaceBefore != 240 ||
+            paragraphAfter.dySpaceAfter != 60 ||
+            paragraphAfter.bLineSpacingRule !=
+                WORDCRAFT_DEFAULT_LINE_SPACING_RULE ||
+            paragraphAfter.dyLineSpacing !=
+                WORDCRAFT_DEFAULT_LINE_SPACING) {
+            fwprintf(stderr,
+                     L"Heading 1 did not apply its character and paragraph style\n");
+            goto cleanup;
+        }
+
+        if (!send_message_bounded(longWindow, WM_COMMAND,
+                                  MAKEWPARAM(IDM_STYLE_NORMAL, 0), 0,
+                                  NULL) ||
+            !get_character_format_bounded(longEditor, longProcess.hProcess,
+                                          &character) ||
+            !get_paragraph_format_bounded(longEditor, longProcess.hProcess,
+                                          &paragraphAfter) ||
+            (character.dwMask & styleCharacterMask) != styleCharacterMask ||
+            character.yHeight != WORDCRAFT_DEFAULT_FONT_SIZE_TWIPS ||
+            (character.dwEffects &
+             (CFE_BOLD | CFE_ITALIC | CFE_UNDERLINE | CFE_STRIKEOUT |
+              CFE_SUBSCRIPT | CFE_SUPERSCRIPT)) != 0 ||
+            (character.dwEffects & CFE_AUTOBACKCOLOR) == 0 ||
+            character.crTextColor != RGB(0, 0, 0) ||
+            lstrcmpW(character.szFaceName,
+                     WORDCRAFT_DEFAULT_FONT_FACE) != 0 ||
+            (paragraphAfter.dwMask & styleParagraphMask) !=
+                styleParagraphMask ||
+            paragraphAfter.wAlignment != PFA_LEFT ||
+            paragraphAfter.wNumbering != 0 ||
+            paragraphAfter.dxStartIndent != 0 ||
+            paragraphAfter.dxOffset != 0 ||
+            paragraphAfter.dySpaceBefore != 0 ||
+            paragraphAfter.dySpaceAfter !=
+                WORDCRAFT_DEFAULT_PARAGRAPH_SPACE_AFTER_TWIPS ||
+            paragraphAfter.bLineSpacingRule !=
+                WORDCRAFT_DEFAULT_LINE_SPACING_RULE ||
+            paragraphAfter.dyLineSpacing !=
+                WORDCRAFT_DEFAULT_LINE_SPACING) {
+            fwprintf(stderr,
+                     L"Normal did not restore the WordCraft default character and paragraph style\n");
+            goto cleanup;
+        }
     }
     longMenu = GetMenu(longWindow);
     alignLeftButton = find_control(longWindow, IDC_ALIGN_LEFT);
@@ -1733,12 +3352,17 @@ int wmain(void)
         goto cleanup;
     }
     longEditor = find_control(longWindow, IDC_EDITOR);
-    if (longEditor == NULL ||
+    longPageView = longEditor != NULL ? GetParent(longEditor) : NULL;
+    if (longEditor == NULL || longPageView == NULL ||
         !query_wordcraft_state(longWindow, WCQ_COMMENT_COUNT, 0,
                                &commentCount) ||
         !query_wordcraft_state(longWindow, WCQ_COMMENT_ACTIVE_INDEX, 0,
                                &activeComment) ||
+        !query_wordcraft_state(longWindow,
+                               WCQ_COMMENT_HIGHLIGHT_VISIBLE, 0,
+                               &commentHighlightVisible) ||
         commentCount != 1 || activeComment != 0 ||
+        commentHighlightVisible != 0 ||
         !comment_matches(longWindow, 0, 0, 3, firstCommentText) ||
         !send_message_bounded(longEditor, WM_GETTEXTLENGTH, 0, 0,
                               &currentPage) ||
@@ -1749,6 +3373,11 @@ int wmain(void)
                  L"RTF save/reopen did not preserve the comment metadata without changing text\n");
         goto cleanup;
     }
+    if (!wait_for_comment_margin(longWindow, 1, 0, FALSE, NULL, NULL)) {
+        fwprintf(stderr,
+                 L"the persisted comment did not reopen in the side rail\n");
+        goto cleanup;
+    }
     if (!close_wordcraft_cleanly(longWindow, &longProcess)) {
         fwprintf(stderr,
                  L"WordCraft did not close cleanly after comment persistence validation\n");
@@ -1756,8 +3385,17 @@ int wmain(void)
     }
     longWindow = NULL;
 
-    printf("hidden_launch=ok command_line_utf8=ok pagination=ok page_counter=ok "
+    printf("hidden_launch=ok command_line_utf8=ok default_page_margins=ok pagination=ok page_counter=ok "
            "ribbon_tabs=ok ribbon_panels=ok ribbon_keyboard=ok "
+           "home_ribbon_groups=ok home_ribbon_controls=ok "
+           "home_ribbon_full=ok home_ribbon_compact=ok "
+           "home_ribbon_collapsed=ok collapsed_style_combo=ok "
+           "collapsed_focus_fallback=ok "
+           "home_ribbon_formatting=ok home_ribbon_styles=ok "
+           "style_partial_paragraph=ok style_undo_atomic=ok "
+           "style_selection_endpoints=ok "
+           "ribbon_tab_traversal=ok "
+           "paper_sizes=ok paper_layout=ok "
            "advanced_typography=ok text_engine_defaults=ok "
            "dark_mode=ok theme_document_invariance=ok workers=ok spellcheck=ok "
            "inline_completion=ok tab_accept=ok ordinary_tab=ok toggles=ok "
@@ -1766,7 +3404,11 @@ int wmain(void)
            "scroll_coalescing=ok "
            "viewport_selection=ok cross_page_selection=ok "
            "caret_page_sync=ok default_font=ok format_bar=ok "
-           "paragraph_formatting=ok comments=ok comment_navigation=ok "
+           "paragraph_formatting=ok comments=ok comment_margin=ok "
+           "comment_margin_collapse=ok "
+           "comment_margin_click=ok comment_navigation=ok "
+           "comment_highlight=ok comment_draft_cleanup=ok "
+           "highlight_nonmutating=ok "
            "comment_rtf_round_trip=ok rtf_format_save=ok clean_exit=ok\n");
     result = 0;
 

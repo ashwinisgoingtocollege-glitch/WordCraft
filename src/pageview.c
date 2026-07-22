@@ -3,6 +3,7 @@
 #endif
 
 #include "editor.h"
+#include "rendereditor.h"
 
 #include <limits.h>
 #include <richole.h>
@@ -10,7 +11,6 @@
 #include <tom.h>
 
 #define PAGEVIEW_CLASS_NAME L"WordCraftPageView"
-#define PAGEVIEW_CONTROL_ID 2020
 #define PAGEVIEW_EDITOR_SUBCLASS_ID ((UINT_PTR)0x50414745)
 #define PAGEVIEW_DEFAULT_WIDTH 8500
 #define PAGEVIEW_DEFAULT_HEIGHT 11000
@@ -63,6 +63,9 @@ typedef struct PageViewState {
     int pageGap;
     int pagePitch;
     int outerGutter;
+    int commentMarginWidth;
+    int commentMarginGap;
+    BOOL commentsVisible;
     int pageLeft;
     int firstPageTop;
     int canvasWidth;
@@ -267,6 +270,17 @@ static LONG pageview_thousandths_to_twips(LONG value)
         return 0;
     }
     return MulDiv(value, 1440, 1000);
+}
+
+static LONG pageview_thousandths_to_himetric(LONG value)
+{
+    LONGLONG result;
+
+    if (value <= 0) {
+        return 0;
+    }
+    result = ((LONGLONG)value * 2540 + 500) / 1000;
+    return result > LONG_MAX ? LONG_MAX : (LONG)result;
 }
 
 static void pageview_get_page_units(const AppState *app, LONG *width,
@@ -859,6 +873,7 @@ static void pageview_paint(PageViewState *state, HWND hwnd, HDC dc,
     if (borderBrush != NULL) {
         DeleteObject(borderBrush);
     }
+    comments_paint_margin(state->app, dc, &dirty);
     if (!state->app->paginationDirty) {
         pageview_schedule_preview_warm(state, hwnd);
     }
@@ -1563,6 +1578,16 @@ static LRESULT CALLBACK pageview_window_proc(HWND hwnd, UINT message,
         return 0;
     case WM_LBUTTONDOWN:
     case WM_LBUTTONDBLCLK:
+        if (app != NULL) {
+            POINT point;
+            point.x = (short)LOWORD(lParam);
+            point.y = (short)HIWORD(lParam);
+            if (comments_handle_margin_click(app, point)) {
+                return 0;
+            }
+        }
+        return pageview_forward_page_click(state, hwnd, message, wParam,
+                                           lParam);
     case WM_RBUTTONDOWN:
         return pageview_forward_page_click(state, hwnd, message, wParam,
                                            lParam);
@@ -1619,7 +1644,7 @@ BOOL pageview_create(AppState *app)
         WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS |
             WS_HSCROLL | WS_VSCROLL,
         0, 0, 0, 0, app->mainWindow,
-        (HMENU)(INT_PTR)PAGEVIEW_CONTROL_ID, app->instance, app);
+        (HMENU)(INT_PTR)IDC_PAGE_VIEW, app->instance, app);
     if (app->pageView == NULL) {
         return FALSE;
     }
@@ -1632,7 +1657,7 @@ void pageview_layout(AppState *app)
 {
     PageViewState *state;
     RECT client;
-    RECT formatRect;
+    RECT viewInsets;
     RECT activePageRect;
     RECT intersection;
     LONG pageWidthUnits;
@@ -1644,11 +1669,13 @@ void pageview_layout(AppState *app)
     int zoom;
     int pageWidth;
     int pageHeight;
-    int logicalPageWidth;
-    int logicalPageHeight;
     int gutter;
     int pageGap;
     int pagePitch;
+    int commentMarginWidth;
+    int commentMarginGap;
+    int commentExtraWidth;
+    int groupWidth;
     int canvasWidth;
     int canvasHeight;
     int horizontalPosition;
@@ -1684,21 +1711,11 @@ void pageview_layout(AppState *app)
     zoom = app->zoomPercent > 0 ? app->zoomPercent : 100;
     pageWidth = pageview_thousandths_to_pixels(pageWidthUnits, dpiX, zoom);
     pageHeight = pageview_thousandths_to_pixels(pageHeightUnits, dpiY, zoom);
-    logicalPageWidth = pageview_thousandths_to_pixels(
-        pageWidthUnits, dpiX, 100);
-    logicalPageHeight = pageview_thousandths_to_pixels(
-        pageHeightUnits, dpiY, 100);
     if (pageWidth < 1) {
         pageWidth = 1;
     }
     if (pageHeight < 1) {
         pageHeight = 1;
-    }
-    if (logicalPageWidth < 1) {
-        logicalPageWidth = 1;
-    }
-    if (logicalPageHeight < 1) {
-        logicalPageHeight = 1;
     }
     if (app->pageCount < 1) {
         app->pageCount = 1;
@@ -1711,14 +1728,25 @@ void pageview_layout(AppState *app)
     if (pageGap < 1) {
         pageGap = 1;
     }
+    state->commentsVisible = comments_count(app) > 0;
+    commentMarginWidth = state->commentsVisible
+                             ? app_scale(app->pageView, 286) : 0;
+    commentMarginGap = state->commentsVisible
+                           ? app_scale(app->pageView, 18) : 0;
+    if (state->commentsVisible) {
+        commentMarginWidth = max(app_scale(app->pageView, 220),
+                                 commentMarginWidth);
+        commentMarginGap = max(1, commentMarginGap);
+    }
+    commentExtraWidth = pageview_saturate_int64(
+        (LONGLONG)commentMarginGap + commentMarginWidth);
+    groupWidth = pageview_saturate_int64(
+        (LONGLONG)pageWidth + commentExtraWidth);
     pagePitch = pageHeight > INT_MAX - pageGap
                     ? INT_MAX
                     : pageHeight + pageGap;
-    if (pageWidth > INT_MAX - gutter * 2) {
-        canvasWidth = INT_MAX;
-    } else {
-        canvasWidth = pageWidth + gutter * 2;
-    }
+    canvasWidth = pageview_saturate_int64(
+        (LONGLONG)groupWidth + (LONGLONG)gutter * 2);
     stackHeight64 = (LONGLONG)app->pageCount * pageHeight +
                     (LONGLONG)(app->pageCount - 1) * pageGap;
     canvasHeight64 = stackHeight64 + (LONGLONG)gutter * 2;
@@ -1735,7 +1763,7 @@ void pageview_layout(AppState *app)
     state->scrollTargetY = verticalPosition;
     if (canvasWidth <= viewportWidth) {
         pageLeft = client.left +
-                   (viewportWidth - pageWidth) / 2;
+                   (viewportWidth - groupWidth) / 2;
     } else {
         pageLeft = gutter - horizontalPosition;
     }
@@ -1750,6 +1778,8 @@ void pageview_layout(AppState *app)
     state->pageGap = pageGap;
     state->pagePitch = pagePitch;
     state->outerGutter = gutter;
+    state->commentMarginWidth = commentMarginWidth;
+    state->commentMarginGap = commentMarginGap;
     state->pageLeft = pageLeft;
     state->firstPageTop = firstPageTop;
     state->canvasWidth = canvasWidth;
@@ -1791,22 +1821,14 @@ void pageview_layout(AppState *app)
         }
         ShowWindow(app->editor, SW_SHOWNOACTIVATE);
 
-        marginLeft = pageview_thousandths_to_pixels(
-            app->pageMargins.left, dpiX, 100);
-        marginTop = pageview_thousandths_to_pixels(
-            app->pageMargins.top, dpiY, 100);
-        marginRight = pageview_thousandths_to_pixels(
-            app->pageMargins.right, dpiX, 100);
-        marginBottom = pageview_thousandths_to_pixels(
-            app->pageMargins.bottom, dpiY, 100);
-        marginLeft = pageview_clamp_int(marginLeft, 0,
-                                        logicalPageWidth - 1);
-        marginTop = pageview_clamp_int(marginTop, 0,
-                                       logicalPageHeight - 1);
-        marginRight = pageview_clamp_int(marginRight, 0,
-                                         logicalPageWidth - 1);
-        marginBottom = pageview_clamp_int(marginBottom, 0,
-                                          logicalPageHeight - 1);
+        marginLeft = pageview_thousandths_to_himetric(
+            app->pageMargins.left);
+        marginTop = pageview_thousandths_to_himetric(
+            app->pageMargins.top);
+        marginRight = pageview_thousandths_to_himetric(
+            app->pageMargins.right);
+        marginBottom = pageview_thousandths_to_himetric(
+            app->pageMargins.bottom);
         printableWidthTwips = pageview_thousandths_to_twips(pageWidthUnits) -
                               pageview_thousandths_to_twips(
                                   app->pageMargins.left) -
@@ -1826,15 +1848,8 @@ void pageview_layout(AppState *app)
                           state->configuredPrintableWidth != printableWidthTwips;
         if (configureEditor) {
             pageview_clear_preview_cache(state);
-            SetRect(&formatRect, marginLeft, marginTop,
-                    logicalPageWidth - marginRight,
-                    logicalPageHeight - marginBottom);
-            if (formatRect.right <= formatRect.left + 1) {
-                formatRect.right = formatRect.left + 1;
-            }
-            if (formatRect.bottom <= formatRect.top + 1) {
-                formatRect.bottom = formatRect.top + 1;
-            }
+            SetRect(&viewInsets, marginLeft, marginTop,
+                    marginRight, marginBottom);
             state->switchingPage = TRUE;
             SendMessageW(app->editor, EM_SETVIEWKIND, VM_PAGE, 0);
             SendMessageW(app->editor, EM_SETZOOM, (WPARAM)zoom, 100);
@@ -1844,8 +1859,7 @@ void pageview_layout(AppState *app)
                              (LPARAM)printableWidthTwips);
                 ReleaseDC(app->editor, dc);
             }
-            SendMessageW(app->editor, EM_SETRECTNP, 0,
-                         (LPARAM)&formatRect);
+            render_editor_set_view_insets(app->editor, &viewInsets);
             state->switchingPage = FALSE;
             state->configuredEditor = app->editor;
             state->configuredWidth = pageWidth;
@@ -2116,12 +2130,140 @@ LONG pageview_page_start(AppState *app, LONG page)
     return app->pageEnds[page - 2];
 }
 
-LRESULT pageview_query_state(AppState *app, UINT query)
+LONG pageview_character_page(AppState *app, LONG character)
+{
+    if (character < 0) {
+        character = 0;
+    }
+    return pageview_page_from_character(app, character);
+}
+
+BOOL pageview_get_comment_margin_rect(AppState *app, LONG page, RECT *rect)
 {
     PageViewState *state;
+    RECT pageRect;
+
+    if (rect != NULL) {
+        SetRectEmpty(rect);
+    }
+    if (app == NULL || app->pageView == NULL || rect == NULL) {
+        return FALSE;
+    }
+    state = pageview_get_state(app->pageView);
+    if (state == NULL || !state->commentsVisible ||
+        state->commentMarginWidth <= 0 ||
+        !pageview_page_rect(state, page, &pageRect)) {
+        return FALSE;
+    }
+    rect->left = pageview_saturate_int64(
+        (LONGLONG)pageRect.right + state->commentMarginGap);
+    rect->top = pageRect.top;
+    rect->right = pageview_saturate_int64(
+        (LONGLONG)rect->left + state->commentMarginWidth);
+    rect->bottom = pageRect.bottom;
+    return rect->right > rect->left && rect->bottom > rect->top;
+}
+
+BOOL pageview_map_character_to_client(AppState *app, LONG character,
+                                      LONG *page, POINT *point)
+{
+    PageViewState *state;
+    RECT pageRect;
+    POINT local;
+    LONG mappedPage;
+    LONG displayedPage;
+    LONG pageStart;
+    LONG pageEnd;
+    LONG span;
+    LONG offset;
+    int dpiX;
+    int dpiY;
+    int zoom;
+    int marginTop;
+    int marginBottom;
+    int printableHeight;
+
+    if (page != NULL) {
+        *page = 0;
+    }
+    if (point != NULL) {
+        point->x = 0;
+        point->y = 0;
+    }
+    if (app == NULL || app->pageView == NULL || app->editor == NULL ||
+        point == NULL) {
+        return FALSE;
+    }
+    state = pageview_get_state(app->pageView);
+    if (state == NULL) {
+        return FALSE;
+    }
+    if (state->pageWidth <= 0 || state->pageHeight <= 0) {
+        pageview_layout(app);
+    }
+    character = max(0, character);
+    mappedPage = pageview_page_from_character(app, character);
+    if (!pageview_page_rect(state, mappedPage, &pageRect)) {
+        return FALSE;
+    }
+    if (page != NULL) {
+        *page = mappedPage;
+    }
+
+    displayedPage = (LONG)SendMessageW(app->editor, EM_GETPAGE, 0, 0) + 1;
+    local.x = -1;
+    local.y = -1;
+    if (displayedPage == mappedPage) {
+        SendMessageW(app->editor, EM_POSFROMCHAR, (WPARAM)&local,
+                     (LPARAM)character);
+        if (local.x >= 0 && local.y >= 0 &&
+            local.y < pageRect.bottom - pageRect.top) {
+            point->x = pageRect.right;
+            point->y = pageRect.top + local.y;
+            return TRUE;
+        }
+    }
+
+    pageStart = pageview_page_start(app, mappedPage);
+    if (mappedPage < app->pageCount && app->pageEnds != NULL) {
+        pageEnd = app->pageEnds[mappedPage - 1];
+    } else {
+        pageEnd = (LONG)SendMessageW(app->editor, WM_GETTEXTLENGTH, 0, 0);
+    }
+    if (pageEnd < pageStart) {
+        pageEnd = pageStart;
+    }
+    span = max(1, pageEnd - pageStart);
+    offset = pageview_clamp_long(character - pageStart, 0, span);
+    pageview_get_dpi(app->pageView, &dpiX, &dpiY);
+    zoom = app->zoomPercent > 0 ? app->zoomPercent : 100;
+    marginTop = pageview_thousandths_to_pixels(
+        app->pageMargins.top, dpiY, zoom);
+    marginBottom = pageview_thousandths_to_pixels(
+        app->pageMargins.bottom, dpiY, zoom);
+    marginTop = pageview_clamp_int(marginTop, 0, state->pageHeight - 1);
+    marginBottom = pageview_clamp_int(marginBottom, 0,
+                                      state->pageHeight - 1);
+    printableHeight = max(1, state->pageHeight - marginTop - marginBottom);
+    point->x = pageRect.right;
+    point->y = pageRect.top + marginTop +
+               pageview_saturate_int64(
+                   ((LONGLONG)printableHeight * offset) / span);
+    (void)dpiX;
+    return TRUE;
+}
+
+LRESULT pageview_query_state(AppState *app, UINT query, LPARAM component)
+{
+    PageViewState *state;
+    RECT rendererInsets;
     LONG firstPage = 0;
     LONG lastPage = 0;
     LONG fullyVisible = 0;
+    LONG index = (LONG)component;
+    int dpiX;
+    int dpiY;
+    int zoom;
 
     if (app == NULL || app->pageView == NULL) {
         return 0;
@@ -2141,6 +2283,54 @@ LRESULT pageview_query_state(AppState *app, UINT query)
         return PAGEVIEW_SCROLL_FRAME_MS;
     default:
         break;
+    }
+    if (query >= WCQ_PAGE_MARGIN_THOUSANDTHS &&
+        query <= WCQ_PAGE_LAYOUT_SIZE_PIXELS) {
+        switch (query) {
+        case WCQ_PAGE_MARGIN_THOUSANDTHS:
+            switch (index) {
+            case 0: return app->pageMargins.left;
+            case 1: return app->pageMargins.top;
+            case 2: return app->pageMargins.right;
+            case 3: return app->pageMargins.bottom;
+            default: return -1;
+            }
+        case WCQ_PAGE_SIZE_THOUSANDTHS:
+            if (index == 0) {
+                return app->pageSize.x;
+            }
+            return index == 1 ? app->pageSize.y : -1;
+        case WCQ_PAGE_LAYOUT_MARGIN_PIXELS:
+            pageview_get_dpi(app->pageView, &dpiX, &dpiY);
+            zoom = app->zoomPercent > 0 ? app->zoomPercent : 100;
+            if (!render_editor_get_view_insets(app->editor,
+                                                &rendererInsets)) {
+                return -1;
+            }
+            switch (index) {
+            case 0:
+                return MulDiv(rendererInsets.left, dpiX * zoom,
+                              2540 * 100);
+            case 1:
+                return MulDiv(rendererInsets.top, dpiY * zoom,
+                              2540 * 100);
+            case 2:
+                return MulDiv(rendererInsets.right, dpiX * zoom,
+                              2540 * 100);
+            case 3:
+                return MulDiv(rendererInsets.bottom, dpiY * zoom,
+                              2540 * 100);
+            default:
+                return -1;
+            }
+        case WCQ_PAGE_LAYOUT_SIZE_PIXELS:
+            if (index == 0) {
+                return state->pageWidth;
+            }
+            return index == 1 ? state->pageHeight : -1;
+        default:
+            return 0;
+        }
     }
     pageview_visible_page_range(state, app->pageView, &firstPage,
                                 &lastPage, &fullyVisible);

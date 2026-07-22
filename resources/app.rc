@@ -86,6 +86,15 @@ BEGIN
         MENUITEM "&Previous Comment",           IDM_REVIEW_PREVIOUS_COMMENT
         MENUITEM "Ne&xt Comment",               IDM_REVIEW_NEXT_COMMENT
         MENUITEM "&Delete Comment",             IDM_REVIEW_DELETE_COMMENT
+        MENUITEM SEPARATOR
+        MENUITEM "&Live Sharing...",             IDM_REVIEW_LIVE_SHARE
+        POPUP "Live Sharing &Commands"
+        BEGIN
+            MENUITEM "&Start Hosting",           IDM_LIVE_START_HOST
+            MENUITEM "&Join Session...",         IDM_LIVE_JOIN_SESSION
+            MENUITEM "&Copy Invitation",         IDM_LIVE_COPY_INVITATION
+            MENUITEM "&Leave Session",           IDM_LIVE_LEAVE_SESSION
+        END
     END
     POPUP "&Help"
     BEGIN
@@ -123,4 +132,61 @@ BEGIN
     "M", IDM_REVIEW_ADD_COMMENT,     VIRTKEY, CONTROL, ALT
     VK_F6, IDM_RIBBON_FOCUS,          VIRTKEY
     VK_F5, IDM_INSERT_DATETIME,       VIRTKEY
+END
+
+IDD_CUSTOM_PAPER DIALOGEX 0, 0, 252, 136
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Custom Paper Size"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "&Width:", -1, 12, 14, 46, 12
+    EDITTEXT        IDC_CUSTOM_PAPER_WIDTH, 62, 12, 86, 14,
+                    ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "&Height:", -1, 12, 38, 46, 12
+    EDITTEXT        IDC_CUSTOM_PAPER_HEIGHT, 62, 36, 86, 14,
+                    ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "&Units:", -1, 12, 62, 46, 12
+    COMBOBOX        IDC_CUSTOM_PAPER_UNITS, 62, 60, 112, 48,
+                    CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "The current margins must leave at least 0.1 inch of printable space.",
+                    -1, 12, 84, 228, 20
+    DEFPUSHBUTTON   "OK", IDOK, 142, 112, 46, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 194, 112, 46, 14
+END
+
+IDD_LIVE_SHARE DIALOGEX 0, 0, 372, 256
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "WordCraft Live Sharing"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "Status:", -1, 12, 12, 38, 12
+    LTEXT           "Not sharing", IDC_LIVE_STATUS, 54, 12, 304, 24
+    LTEXT           "Direct sharing supports up to 32 clients on a trusted LAN or private VPN.",
+                    -1, 12, 32, 346, 20
+
+    GROUPBOX        "Host this document", -1, 8, 56, 356, 88
+    LTEXT           "Address:", -1, 18, 76, 42, 12
+    EDITTEXT        IDC_LIVE_ADVERTISED_HOST, 62, 73, 166, 14,
+                    ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "Port:", -1, 236, 76, 26, 12
+    EDITTEXT        IDC_LIVE_LISTEN_PORT, 264, 73, 42, 14,
+                    ES_AUTOHSCROLL | ES_NUMBER | WS_TABSTOP
+    PUSHBUTTON      "Start", IDC_LIVE_START_HOST, 312, 72, 40, 16
+    LTEXT           "Invitation:", -1, 18, 102, 48, 12
+    EDITTEXT        IDC_LIVE_HOST_INVITATION, 68, 100, 218, 14,
+                    ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "Copy", IDC_LIVE_COPY_INVITATION, 294, 99, 58, 16
+    LTEXT           "Use port 0 for an automatic port; advertise a LAN, VPN, or public address clients can reach.",
+                    -1, 18, 120, 334, 18
+
+    GROUPBOX        "Join another host", -1, 8, 150, 356, 54
+    LTEXT           "Invitation:", -1, 18, 169, 48, 12
+    EDITTEXT        IDC_LIVE_JOIN_INVITATION, 68, 167, 218, 14,
+                    ES_AUTOHSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON   "Join", IDC_LIVE_JOIN_SESSION, 294, 166, 58, 16
+
+    LTEXT           "The invitation token authenticates peers; use a private network because the TCP connection is not encrypted.",
+                    -1, 12, 210, 254, 28
+    PUSHBUTTON      "Leave Session", IDC_LIVE_LEAVE_SESSION, 274, 214, 80, 16
+    PUSHBUTTON      "Close", IDCANCEL, 306, 238, 48, 14
 END

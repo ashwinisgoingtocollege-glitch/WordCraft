@@ -18,9 +18,28 @@ static void release_print_dc(PRINTDLGW *dialog)
     }
 }
 
+static void ensure_default_printer_settings(AppState *app)
+{
+    PRINTDLGW dialog;
+
+    if (app == NULL || (app->printerDevMode != NULL &&
+                        app->printerDevNames != NULL)) {
+        return;
+    }
+    ZeroMemory(&dialog, sizeof(dialog));
+    dialog.lStructSize = sizeof(dialog);
+    dialog.Flags = PD_RETURNDEFAULT;
+    if (PrintDlgW(&dialog)) {
+        retain_printer_settings(app, dialog.hDevMode, dialog.hDevNames);
+    }
+}
+
 void printing_page_setup(AppState *app)
 {
     PAGESETUPDLGW dialog;
+
+    ensure_default_printer_settings(app);
+    paper_size_apply_to_devmode(app, app->printerDevMode);
     ZeroMemory(&dialog, sizeof(dialog));
     dialog.lStructSize = sizeof(dialog);
     dialog.hwndOwner = app->mainWindow;
@@ -28,19 +47,24 @@ void printing_page_setup(AppState *app)
     dialog.hDevNames = app->printerDevNames;
     dialog.Flags = PSD_MARGINS | PSD_MINMARGINS | PSD_INTHOUSANDTHSOFINCHES;
     dialog.rtMargin = app->pageMargins;
+    dialog.ptPaperSize = app->pageSize;
     dialog.rtMinMargin.left = 250;
     dialog.rtMinMargin.top = 250;
     dialog.rtMinMargin.right = 250;
     dialog.rtMinMargin.bottom = 250;
 
     if (PageSetupDlgW(&dialog)) {
+        retain_printer_settings(app, dialog.hDevMode, dialog.hDevNames);
         app->pageMargins = dialog.rtMargin;
         if (dialog.ptPaperSize.x > 0 && dialog.ptPaperSize.y > 0) {
             app->pageSize = dialog.ptPaperSize;
         }
+        paper_size_note_external_change(app);
+        text_engine_note_layout_change(app);
         pageview_mark_dirty(app);
         pageview_layout(app);
         app_update_status(app, TRUE);
+        live_share_document_changed(app);
     } else {
         DWORD commonError = CommDlgExtendedError();
         if (commonError != 0) {
@@ -48,6 +72,7 @@ void printing_page_setup(AppState *app)
         }
     }
     retain_printer_settings(app, dialog.hDevMode, dialog.hDevNames);
+    ribbon_sync_paper_size(app);
 }
 
 static LONG thousandths_to_twips(LONG value)
@@ -76,6 +101,9 @@ void printing_print_document(AppState *app)
     BOOL printSucceeded = TRUE;
     BOOL firstPage = TRUE;
     DWORD error = ERROR_SUCCESS;
+
+    ensure_default_printer_settings(app);
+    paper_size_apply_to_devmode(app, app->printerDevMode);
 
     ZeroMemory(&dialog, sizeof(dialog));
     dialog.lStructSize = sizeof(dialog);

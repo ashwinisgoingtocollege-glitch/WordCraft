@@ -36,6 +36,19 @@
 #define IDM_FORMAT_BULLETS              1211
 #define IDM_FORMAT_INDENT_INCREASE      1212
 #define IDM_FORMAT_INDENT_DECREASE      1213
+#define IDM_FORMAT_GROW_FONT            1214
+#define IDM_FORMAT_SHRINK_FONT          1215
+#define IDM_FORMAT_SUBSCRIPT            1216
+#define IDM_FORMAT_SUPERSCRIPT          1217
+#define IDM_FORMAT_HIGHLIGHT            1218
+#define IDM_FORMAT_CLEAR                1219
+#define IDM_FORMAT_NUMBERING            1220
+#define IDM_FORMAT_LINE_SPACING         1221
+#define IDM_STYLE_NORMAL                1230
+#define IDM_STYLE_NO_SPACING            1231
+#define IDM_STYLE_HEADING_1             1232
+#define IDM_STYLE_HEADING_2             1233
+#define IDM_STYLE_TITLE                 1234
 
 #define IDM_INSERT_DATETIME             1301
 
@@ -56,6 +69,11 @@
 #define IDM_REVIEW_PREVIOUS_COMMENT     1802
 #define IDM_REVIEW_NEXT_COMMENT         1803
 #define IDM_REVIEW_DELETE_COMMENT       1804
+#define IDM_REVIEW_LIVE_SHARE           1810
+#define IDM_LIVE_START_HOST             1811
+#define IDM_LIVE_JOIN_SESSION           1812
+#define IDM_LIVE_COPY_INVITATION        1813
+#define IDM_LIVE_LEAVE_SESSION          1814
 
 #define IDM_HELP_ABOUT                  1901
 #define IDM_RIBBON_FOCUS                1950
@@ -80,5 +98,32 @@
 #define IDC_RIBBON_TABS                 2020
 #define IDC_COMMENT_EDIT                2021
 #define IDC_COMMENT_SUMMARY             2022
+#define IDC_PAGE_VIEW                   2023
+#define IDC_PAPER_SIZE_LABEL            2024
+#define IDC_PAPER_SIZE_COMBO            2025
+#define IDC_HOME_GROUP_CLIPBOARD        2030
+#define IDC_HOME_GROUP_FONT             2031
+#define IDC_HOME_GROUP_PARAGRAPH        2032
+#define IDC_HOME_GROUP_STYLES           2033
+#define IDC_HOME_GROUP_EDITING          2034
+#define IDC_HOME_STYLE_COMBO            2035
+
+#define IDC_LIVE_SHARE_BUTTON           2040
+
+#define IDD_CUSTOM_PAPER                2100
+#define IDC_CUSTOM_PAPER_WIDTH          2101
+#define IDC_CUSTOM_PAPER_HEIGHT         2102
+#define IDC_CUSTOM_PAPER_UNITS          2103
+
+#define IDD_LIVE_SHARE                  2200
+#define IDC_LIVE_STATUS                 2201
+#define IDC_LIVE_HOST_INVITATION        2202
+#define IDC_LIVE_JOIN_INVITATION        2203
+#define IDC_LIVE_START_HOST             2204
+#define IDC_LIVE_COPY_INVITATION        2205
+#define IDC_LIVE_JOIN_SESSION           2206
+#define IDC_LIVE_LEAVE_SESSION          2207
+#define IDC_LIVE_ADVERTISED_HOST        2208
+#define IDC_LIVE_LISTEN_PORT            2209
 
 #endif

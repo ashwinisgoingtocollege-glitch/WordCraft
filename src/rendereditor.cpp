@@ -183,6 +183,7 @@ public:
           selectionMessageCount_(0), lastSelectionStart_(-1),
           lastSelectionResult_(E_PENDING), lastSelectionPage_(-1)
     {
+        SetRectEmpty(&viewInset_);
         std::memset(&characterFormat_, 0, sizeof(characterFormat_));
         characterFormat_.cbSize = sizeof(characterFormat_);
         characterFormat_.dwMask = CFM_FACE | CFM_SIZE | CFM_COLOR |
@@ -459,6 +460,26 @@ public:
         }
     }
 
+    BOOL SetViewInsets(const RECT &insets)
+    {
+        if (EqualRect(&viewInset_, &insets)) {
+            return TRUE;
+        }
+        viewInset_ = insets;
+        if (services_ != nullptr &&
+            FAILED(services_->OnTxPropertyBitsChange(
+                TXTBIT_VIEWINSETCHANGE, TXTBIT_VIEWINSETCHANGE))) {
+            return FALSE;
+        }
+        InvalidateRect(window_, nullptr, TRUE);
+        return TRUE;
+    }
+
+    void GetViewInsets(RECT *insets) const
+    {
+        *insets = viewInset_;
+    }
+
     void SetRedraw(BOOL enabled)
     {
         redrawEnabled_ = enabled;
@@ -713,7 +734,7 @@ public:
         if (inset == nullptr) {
             return E_POINTER;
         }
-        SetRectEmpty(inset);
+        *inset = viewInset_;
         return S_OK;
     }
 
@@ -1322,6 +1343,7 @@ private:
     BOOL formatterDirty_;
     CHARFORMAT2W characterFormat_;
     PARAFORMAT2 paragraphFormat_;
+    RECT viewInset_;
     COLORREF background_;
     DWORD propertyBits_;
     DWORD backend_;
@@ -1595,6 +1617,42 @@ extern "C" BOOL render_editor_register(HINSTANCE instance,
         return FALSE;
     }
     runtime.registered = TRUE;
+    return TRUE;
+}
+
+extern "C" BOOL render_editor_set_view_insets(HWND editor,
+                                                const RECT *insets)
+{
+    RenderEditor *state;
+
+    if (insets == nullptr || insets->left < 0 || insets->top < 0 ||
+        insets->right < 0 || insets->bottom < 0 ||
+        !render_editor_is_window(editor)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    state = editor_from_window(editor);
+    if (state == nullptr) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    return state->SetViewInsets(*insets);
+}
+
+extern "C" BOOL render_editor_get_view_insets(HWND editor, RECT *insets)
+{
+    RenderEditor *state;
+
+    if (insets == nullptr || !render_editor_is_window(editor)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    state = editor_from_window(editor);
+    if (state == nullptr) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    state->GetViewInsets(insets);
     return TRUE;
 }
 
