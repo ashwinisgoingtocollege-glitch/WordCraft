@@ -61,6 +61,13 @@ WordCraft's original mark is a mischievous dog caught eating a sheet of homework
   yellow while composing or visiting its comment; that display-only highlight
   never changes saved formatting, undo history, copying, printing, pagination,
   or word counts
+- Document-scoped chat under the Review tab. Messages are tagged with their
+  author and time, synchronized during live sharing, and embedded in `.rtf`
+  files so the conversation remains available after the sharing session ends
+- A Google Docs-inspired **Review > Version History** viewer with newest-first
+  checkpoints, author and timestamp labels, inserted/deleted character counts,
+  author-colored change highlighting, a read-only document preview, and a
+  recoverable **Restore this version** action
 - Multi-level undo/redo, clipboard editing, and standard keyboard shortcuts
 - Forward/backward find, replace, replace all, case matching, and whole-word matching
 - A **Layout > Paper Size** catalog with 24 named Windows paper formats plus
@@ -88,9 +95,13 @@ WordCraft's original mark is a mischievous dog caught eating a sheet of homework
 WordCraft can share the current document directly without a central server. The
 host computer runs the embedded session server and supports up to 32 connected
 clients. Use **Start Hosting**, **Copy Invitation**, **Join Session**, and
-**Leave Session** to manage a session. Full formatted RTF snapshots, including
-WordCraft comments, paper size, and page margins, are synchronized between the
-host and clients.
+**Leave Session** to manage a session. Formatted RTF snapshots include
+WordCraft comments, document chat, version checkpoints, paper size, and page
+margins. If accumulated history would push a live frame past 16 MiB, WordCraft
+transmits a read-only newest-first subset without pruning the complete history
+kept by the host or written by a normal RTF save. Existing clients merge later
+subsets by stable entry ID; a newly joining client initially receives the
+newest subset that fits.
 
 The **Live Sharing...** window lets the host choose the address placed in the
 invitation and the TCP listen port. Port `0` asks Windows to choose an available
@@ -112,6 +123,30 @@ WordCraft retries transient snapshot-queue failures and makes a bounded attempt
 to flush a final pending edit when a participant leaves or exits.
 Authenticated connections exchange lightweight heartbeats so abandoned peers
 do not occupy one of the 32 client slots indefinitely.
+
+## Document chat and version history
+
+Open **Review > Document Chat** to discuss the current document. Chat belongs
+to the document rather than to a particular sharing window: ending or leaving
+a live session does not clear it. Save the document as `.rtf` to make its chat
+history durable across application restarts. Each message carries a stable
+identifier, author, and timestamp so host/client merges do not duplicate it.
+Chat uses bounded retention: the latest 2,048 messages are preserved, with the
+oldest message pruned when a newer one exceeds that limit.
+
+WordCraft creates a baseline version when a document opens and coalesces
+ordinary typing into checkpoints after a short idle period. It also checkpoints
+before saves and live content publication. The bounded history keeps the latest
+40 versions and up to 12 MiB of combined history-free RTF and plain-text
+snapshot storage, avoiding recursive file growth. Changes arriving from a live
+participant are tagged with that participant's authenticated display name;
+local changes use the current Windows user name.
+
+Use **Review > Version History** to compare a checkpoint with the version before
+it. The viewer highlights the inserted range in a consistent author color and
+summarizes deletions beside the author and timestamp. Restoring an older
+checkpoint first records the document currently on screen, so the restore can
+itself be reversed from the version list.
 
 ## Build
 
@@ -182,9 +217,11 @@ renderer.
 The live-network probe exercises invitation parsing, token authentication,
 partial framing, the 32-client limit, stale revisions, DNS cancellation,
 bounded final-edit flushing, heartbeat eviction, and repeated shutdown. The
-two-process GUI probe verifies formatted RTF, comments, paper layout,
-bidirectional convergence, no update echo, immediate Leave during the debounce
-window, invalid-invitation safety, and clean process exit.
+two-process GUI probe verifies formatted RTF, comments, paper layout, document
+chat and author-tagged history, bidirectional convergence, no update echo,
+immediate Leave during the debounce window, invalid-invitation safety, and
+clean process exit. The history GUI probe additionally saves and reopens an RTF
+document, then checks its persisted chat, versions, and Review-tab viewer.
 It also exercises the real visible startup transition: the branded splash must
 be painted with a Ready status while the initialized editor is still hidden,
 then close before the editor becomes interactive. This check runs through both
@@ -209,16 +246,17 @@ The result is `wordcraft.exe`. Run it directly or pass an RTF/text document:
 
 ## Document compatibility
 
-Use `.rtf` to preserve the formatting and WordCraft comments that WordCraft
-supports. Plain-text saves intentionally contain only text and warn before
-comment metadata is discarded. `.doc` and `.docx` are not supported: those
-formats require a separate binary/OOXML document engine and are not handled by
-the Windows Rich Edit control.
+Use `.rtf` to preserve the formatting, comments, document chat, and version
+history that WordCraft supports. Plain-text export omits chat and version
+metadata, contains only text, and warns before review metadata is discarded.
+`.doc` and `.docx` are not
+supported: those formats require a separate binary/OOXML document engine and
+are not handled by the Windows Rich Edit control.
 
-Comments are stored in an ignored, versioned WordCraft RTF destination. Other
-RTF readers can safely ignore it, but these comments are not Microsoft Word's
-native comment format and another editor may discard the metadata when it
-re-saves the file.
+Comments, chat, and checkpoints are stored in ignored, versioned WordCraft RTF
+destinations. Other RTF readers can safely ignore them, but this is not
+Microsoft Word's native review format and another editor may discard the
+metadata when it re-saves the file.
 
 WordCraft does not redistribute font files. Many catalog families are supplied
 by Windows or Microsoft Office, while others are separately licensed products.
@@ -229,11 +267,12 @@ Text input accepts UTF-8 (with or without a BOM) and BOM-marked UTF-16 little- o
 
 WordCraft checks whether an opened file changed on disk before overwriting it.
 It does not currently provide autosave, crash recovery, cloud-hosted storage,
-tracked changes, macros, or a Word-compatible `.docx` layout engine. Printer,
-paper size (including Custom), orientation, and margin choices are retained for
-the current application session: New and Open keep the active choices while
-WordCraft is running, and live sessions synchronize them, but RTF and
-plain-text files do not store them.
+Word-style accept/reject tracked changes, macros, or a Word-compatible `.docx`
+layout engine. Printer, paper size (including Custom), orientation, and margin
+choices are retained for the current application session: New and Open keep
+the active choices while WordCraft is running, and live sessions synchronize
+them, but RTF and plain-text files do not store them as current-document page
+settings.
 
 The source targets Windows 7 or newer. Windows 8 and later can use the operating system's installed spell checker for the user's locale (falling back to US English when available); Windows 7 and systems without a supported spell service retain the deliberately conservative built-in typo checks. Inline autocomplete is local and deterministic: it does not send document text to a network service. The output architecture follows the selected compiler; the default LLVM installation in this workspace produces x64 Windows binaries.
 
@@ -245,6 +284,8 @@ The source targets Windows 7 or newer. Windows 8 and later can use the operating
 - `src/fonts.c` — requested font catalog and installed-font discovery
 - `src/ribbon.c` — tabbed ribbon navigation and command panels
 - `src/comments.c` — tracked comment anchors, side-page cards, and RTF metadata
+- `src/history.c` — persistent document chat, checkpoint storage, diff metadata,
+  and the Review-tab version viewer
 - `src/textengine.c` — advanced line formatting and document typography policy
 - `src/rendereditor.cpp` — C-callable windowless RichEdit host, live
   DirectWrite renderer, GDI fallback, and pagination-format mirror
@@ -265,6 +306,7 @@ The source targets Windows 7 or newer. Windows 8 and later can use the operating
 - `tests/renderer_probe.c` — live DirectWrite/GDI pixel and editing parity checks
 - `tests/live_probe.c` — protocol, capacity, heartbeat, and shutdown coverage
 - `tests/live_gui_probe.c` — two-process document synchronization coverage
+- `tests/history_gui_probe.c` — chat/history RTF persistence and viewer coverage
 - `resources/app.rc` — icon, menus, shortcuts, and Windows manifest
 - `resources/wordcraft.ico` — multi-size Windows application icon
 - `resources/wordcraft-logo.png` — full-resolution dog-and-homework brand artwork

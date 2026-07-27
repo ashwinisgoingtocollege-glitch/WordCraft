@@ -28,7 +28,7 @@ RESOURCE := $(BUILD_DIR)/app.res
 RC_COMMAND = $(RC) /nologo /I include /I resources /fo $@ resources/app.rc
 endif
 
-SOURCES := src/main.c src/document.c src/format.c src/dialogs.c src/printing.c src/text.c src/pageview.c src/language.c src/assist.c src/fonts.c src/ribbon.c src/comments.c src/textengine.c src/splash.c src/paper.c src/live.c src/liveui.c
+SOURCES := src/main.c src/document.c src/format.c src/dialogs.c src/printing.c src/text.c src/pageview.c src/language.c src/assist.c src/fonts.c src/ribbon.c src/comments.c src/history.c src/textengine.c src/splash.c src/paper.c src/live.c src/liveui.c
 CXX_SOURCES := src/rendereditor.cpp
 OBJECTS := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SOURCES)) $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(CXX_SOURCES))
 RESOURCE_INPUTS := resources/app.rc resources/app.manifest resources/wordcraft.ico include/resource.h
@@ -113,11 +113,15 @@ $(BUILD_DIR)/splash_probe.exe: tests/splash_probe.c include/editor.h include/spl
 $(BUILD_DIR)/live_gui_probe.exe: tests/live_gui_probe.c include/editor.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -municode -o $@ $< -luser32 -lkernel32
 
-gui-test: all $(BUILD_DIR)/gui_probe.exe $(BUILD_DIR)/splash_probe.exe $(BUILD_DIR)/live_gui_probe.exe
+$(BUILD_DIR)/history_gui_probe.exe: tests/history_gui_probe.c include/editor.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -municode -o $@ $< -luser32 -lkernel32
+
+gui-test: all $(BUILD_DIR)/gui_probe.exe $(BUILD_DIR)/splash_probe.exe $(BUILD_DIR)/live_gui_probe.exe $(BUILD_DIR)/history_gui_probe.exe
 	$(BUILD_DIR)\gui_probe.exe
 	$(BUILD_DIR)\splash_probe.exe
 	set WORDCRAFT_DISABLE_D2D=1&& $(BUILD_DIR)\splash_probe.exe
 	$(BUILD_DIR)\live_gui_probe.exe
+	$(BUILD_DIR)\history_gui_probe.exe
 
 clean:
 	if exist build rmdir /S /Q build
