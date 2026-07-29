@@ -49,6 +49,43 @@ WordCraft's original mark is a mischievous dog caught eating a sheet of homework
   sizing; lists, indentation, alignment, and line spacing; five paragraph
   style presets; and find/replace/select-all. The style gallery collapses into
   a keyboard-friendly selector when the window is narrower
+- A Word-inspired **Insert** ribbon with 29 DPI-scaled native icons across
+  Pages, Tables, Illustrations, Media, Links, Comments, Header & Footer, Text,
+  Symbols, and eSignature groups. It reflows from labeled tiles into compact
+  two- and three-row icon grids without changing keyboard order. Working
+  insertions include cover/blank pages and explicit page breaks, editable
+  tables and text boxes, bounded PNG/JPEG/BMP pictures, clipboard screenshots,
+  static shapes, Unicode icons and symbols, editable SmartArt-style processes
+  and charts, safe web/mail links and online-video references, Quick Parts,
+  WordArt, drop caps, signature/eSignature fields, date and time, and linear
+  equations. Media that the live snapshot policy cannot safely carry is
+  blocked during a sharing session. Commands that require a future persistent
+  anchor, page-adornment, 3D, or OLE model report that limitation instead of
+  writing misleading document content
+- A Word-inspired **Draw** ribbon with 21 DPI-scaled native icons across Input
+  Mode, Undo, Drawing Tools, Stencils, Edit, Convert, Insert, Replay, and Help.
+  It includes black, red, blue, green, pencil, highlighter, and action-pen
+  presets; an Add Pen menu; erasing; optional ruler and ruled-paper guides; and
+  a bounded drawing canvas with local Undo and Clear. Choosing **Insert**
+  commits the sketch as one self-contained vector object, so it participates in
+  document undo, printing, RTF save/reopen, and author-tagged version history.
+  Static drawings are blocked during live sharing by the same snapshot-safety
+  policy as inserted pictures. Commands that require editable stroke
+  recognition or retained stroke timing—Ink to Shape, Ink to Math, and replay
+  after insertion—report that limitation explicitly
+- A Word-inspired **View** ribbon with 27 DPI-scaled native icons across Views,
+  Immersive, Dark Mode, Page Movement, Show, Zoom, Window, Macros, and
+  SharePoint. It preserves Print Layout and Vertical as the paged renderer's
+  truthful defaults, supplies fitted Read Mode, One Page, Multiple Pages, and
+  Page Width zoom actions, and provides a distraction-reduced Focus mode that
+  hides the ribbon and status chrome with `Esc` restoration. Switch Modes uses
+  the existing non-destructive theme path; Ruler and Gridlines are nonprinting
+  overlays; Navigation Pane opens
+  document search; and the window and document-properties commands operate on
+  WordCraft windows without changing document content. Horizontal page
+  layout, structured Outline/Draft/Web engines, immersive reading assistance,
+  split editing, synchronized cross-window scrolling, and trusted macros
+  identify their missing engine explicitly
 - A minimal ribbon treatment with softly rounded tabs and buttons, a restrained
   curved ribbon-card outline, and generous spacing around related controls.
   The native GDI chrome scales with the window DPI and adapts its fills,
@@ -202,6 +239,26 @@ and minimum-width collapsed layouts, font growth and shrinking, scripts,
 highlighting, numbering, line spacing, and the Normal/Heading style bundles.
 It also checks partial-paragraph style expansion, selection preservation, and
 single-step undo for each combined character-and-paragraph style transaction.
+The Insert-ribbon portion verifies all 10 group boundaries and 29 controls,
+their command/icon/group order, actual off-screen GDI icon painting,
+show/hide behavior, keyboard entry, and full, compact, and collapsed layouts.
+It also checks
+that explicit page breaks, blank pages, and locale-formatted date/time
+insertions each participate in undo as a single document change.
+The Draw-ribbon portion verifies all nine group boundaries and 21 controls,
+their command/icon/group order, checked tool state, off-screen native icon
+painting, page visibility, keyboard entry, and full, compact, and collapsed
+layouts. It also checks that selecting pens and toggling the ruler or ruled
+background does not mutate document content.
+A dedicated drawing-canvas probe commits a bounded stroke, verifies atomic
+document Undo/Redo, checks the saved static EMF representation, reopens it,
+and confirms that canceling a fresh canvas is nondestructive.
+The View-ribbon portion verifies all nine group boundaries and 27 controls,
+their exact command/icon/group order, default Print Layout and Vertical
+states, dependent Window enablement, off-screen icon painting, keyboard entry,
+and full, compact, and collapsed layouts. It also checks that reading modes,
+display guides, and zoom-fit actions do not alter text, selection, modified
+state, undo/redo availability, or pagination.
 The GUI probe also verifies the one-inch live page geometry, side-by-side
 comment geometry, temporary non-persistent yellow anchors, card clicking,
 multi-page anchoring, dark-mode persistence, rail collapse, and RTF reopen.
@@ -307,6 +364,7 @@ The source targets Windows 7 or newer. Windows 8 and later can use the operating
 - `tests/live_probe.c` — protocol, capacity, heartbeat, and shutdown coverage
 - `tests/live_gui_probe.c` — two-process document synchronization coverage
 - `tests/history_gui_probe.c` — chat/history RTF persistence and viewer coverage
+- `tests/draw_canvas_gui_probe.c` — drawing insertion, undo, and RTF persistence
 - `resources/app.rc` — icon, menus, shortcuts, and Windows manifest
 - `resources/wordcraft.ico` — multi-size Windows application icon
 - `resources/wordcraft-logo.png` — full-resolution dog-and-homework brand artwork
