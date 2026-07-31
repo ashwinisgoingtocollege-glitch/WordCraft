@@ -1,4 +1,5 @@
 #include "editor.h"
+#include "rendereditor.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -21,6 +22,27 @@ typedef struct ParagraphExpectation {
 /* document.c is linked into this probe so the live-snapshot gate is tested
  * through its real public apply path.  These no-op collaborators keep the
  * probe focused on RTF streaming and validation rather than the full UI. */
+BOOL render_editor_install_static_picture_callback(HWND richEdit)
+{
+    (void)richEdit;
+    return TRUE;
+}
+
+BOOL render_editor_begin_static_picture_stream(HWND editor)
+{
+    (void)editor;
+    return TRUE;
+}
+
+BOOL render_editor_end_static_picture_stream(HWND editor, DWORD *error)
+{
+    (void)editor;
+    if (error != NULL) {
+        *error = ERROR_SUCCESS;
+    }
+    return TRUE;
+}
+
 void app_update_status(AppState *app, BOOL recountWords)
 {
     (void)app;
@@ -119,6 +141,140 @@ BOOL comments_load_rtf_memory(AppState *app, const BYTE *data, SIZE_T size,
 }
 
 BOOL comments_load_rtf_file(AppState *app, const WCHAR *path, DWORD *error)
+{
+    (void)app;
+    (void)path;
+    if (error != NULL) {
+        *error = ERROR_CALL_NOT_IMPLEMENTED;
+    }
+    return FALSE;
+}
+
+void history_clear(AppState *app)
+{
+    (void)app;
+}
+
+void history_seed_if_empty(AppState *app)
+{
+    (void)app;
+}
+
+void history_note_document_changed(AppState *app)
+{
+    (void)app;
+}
+
+BOOL history_flush_pending(AppState *app)
+{
+    (void)app;
+    return TRUE;
+}
+
+SIZE_T history_chat_count(const AppState *app)
+{
+    (void)app;
+    return 0;
+}
+
+SIZE_T history_version_count(const AppState *app)
+{
+    (void)app;
+    return 0;
+}
+
+BOOL history_embed_rtf(AppState *app, const BYTE *rtf, SIZE_T rtfSize,
+                       BYTE **output, SIZE_T *outputSize, DWORD *error)
+{
+    BYTE *copy;
+
+    (void)app;
+    if (output == NULL || outputSize == NULL || error == NULL ||
+        (rtf == NULL && rtfSize != 0)) {
+        if (error != NULL) {
+            *error = ERROR_INVALID_PARAMETER;
+        }
+        return FALSE;
+    }
+    copy = HeapAlloc(GetProcessHeap(), 0, rtfSize == 0 ? 1 : rtfSize);
+    if (copy == NULL) {
+        *error = ERROR_NOT_ENOUGH_MEMORY;
+        return FALSE;
+    }
+    if (rtfSize != 0) {
+        CopyMemory(copy, rtf, rtfSize);
+    }
+    *output = copy;
+    *outputSize = rtfSize;
+    *error = ERROR_SUCCESS;
+    return TRUE;
+}
+
+BOOL history_embed_rtf_bounded(
+    AppState *app, const BYTE *rtf, SIZE_T rtfSize,
+    SIZE_T maximumOutputSize,
+    const HistoryChatToken *requiredChats,
+    SIZE_T requiredChatCount, BYTE **output, SIZE_T *outputSize,
+    DWORD *error)
+{
+    (void)requiredChats;
+    (void)requiredChatCount;
+    if (rtfSize > maximumOutputSize) {
+        if (error != NULL) {
+            *error = ERROR_FILE_TOO_LARGE;
+        }
+        return FALSE;
+    }
+    return history_embed_rtf(app, rtf, rtfSize, output, outputSize,
+                             error);
+}
+
+BOOL history_load_rtf_memory(AppState *app, const BYTE *data, SIZE_T size,
+                             DWORD *error)
+{
+    (void)app;
+    (void)data;
+    (void)size;
+    if (error != NULL) {
+        *error = ERROR_SUCCESS;
+    }
+    return TRUE;
+}
+
+BOOL history_merge_rtf_memory(AppState *app, const BYTE *data, SIZE_T size,
+                              DWORD *error)
+{
+    (void)app;
+    (void)data;
+    (void)size;
+    if (error != NULL) {
+        *error = ERROR_SUCCESS;
+    }
+    return TRUE;
+}
+
+BOOL history_reconcile_rtf_memory(AppState *app, const BYTE *data,
+                                  SIZE_T size, DWORD *error)
+{
+    return history_merge_rtf_memory(app, data, size, error);
+}
+
+BOOL history_reconcile_chat_ack_rtf_memory(
+    AppState *app, const BYTE *data, SIZE_T size,
+    const HistoryChatToken *acknowledgedChats,
+    SIZE_T acknowledgedChatCount, DWORD *error)
+{
+    (void)acknowledgedChats;
+    (void)acknowledgedChatCount;
+    return history_merge_rtf_memory(app, data, size, error);
+}
+
+void history_cancel_pending_revision(AppState *app)
+{
+    (void)app;
+}
+
+BOOL history_load_rtf_file(AppState *app, const WCHAR *path, DWORD *error)
 {
     (void)app;
     (void)path;
@@ -360,6 +516,7 @@ int main(void)
     SIZE_T nestedRtfSize = 0;
     AppState app;
     DWORD liveError = ERROR_SUCCESS;
+    DWORD historyError = ERROR_SUCCESS;
     LONG positions[ARRAYSIZE(paragraphExpectations)];
     SIZE_T index;
     int result = 1;
@@ -525,16 +682,29 @@ int main(void)
         result = 26;
         goto cleanup_buffer;
     }
+    if (!document_validate_history_snapshot(
+            (const BYTE *)pictureRtf, sizeof(pictureRtf) - 1,
+            &historyError) ||
+        historyError != ERROR_SUCCESS ||
+        document_validate_history_snapshot(
+            (const BYTE *)objectRtf, sizeof(objectRtf) - 1,
+            &historyError)) {
+        fprintf(stderr,
+                "history picture/object safety policy was incorrect\n");
+        result = 27;
+        goto cleanup_buffer;
+    }
     if (!build_excessively_nested_rtf(nestedRtf, ARRAYSIZE(nestedRtf),
                                       &nestedRtfSize) ||
         !live_snapshot_rejected_without_mutation(
             &app, nestedRtf, nestedRtfSize)) {
         fprintf(stderr, "excessively nested live RTF was accepted\n");
-        result = 27;
+        result = 28;
         goto cleanup_buffer;
     }
     printf("rtf_unicode=ok formatting_round_trip=ok "
-           "live_safe_subset=ok live_depth_limit=ok\n");
+           "live_safe_subset=ok history_static_picture=ok "
+           "live_depth_limit=ok\n");
     result = 0;
 
 cleanup_buffer:

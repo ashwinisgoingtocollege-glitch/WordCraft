@@ -3,6 +3,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
+#include <wchar.h>
 
 #define PROBE_MESSAGE_TIMEOUT_MS 5000
 
@@ -62,6 +63,257 @@ static const ExpectedHomeControl expectedHomeControls[] = {
     {IDC_HOME_GROUP_EDITING, HOME_GROUP_EDITING}
 };
 
+static const WCHAR *const expectedInsertGroupNames[INSERT_GROUP_COUNT] = {
+    L"Pages", L"Tables", L"Illustrations", L"Media", L"Links",
+    L"Comments", L"Header & Footer", L"Text", L"Symbols", L"eSignature"
+};
+
+typedef struct ExpectedInsertControl {
+    UINT id;
+    int group;
+    RibbonInsertIcon icon;
+    const WCHAR *caption;
+} ExpectedInsertControl;
+
+static const ExpectedInsertControl expectedInsertControls[] = {
+    {IDM_INSERT_COVER_PAGE, INSERT_GROUP_PAGES,
+     RIBBON_INSERT_ICON_COVER_PAGE, L"Cover Page"},
+    {IDM_INSERT_BLANK_PAGE, INSERT_GROUP_PAGES,
+     RIBBON_INSERT_ICON_BLANK_PAGE, L"Blank Page"},
+    {IDM_INSERT_PAGE_BREAK, INSERT_GROUP_PAGES,
+     RIBBON_INSERT_ICON_PAGE_BREAK, L"Page Break"},
+    {IDM_INSERT_TABLE, INSERT_GROUP_TABLES,
+     RIBBON_INSERT_ICON_TABLE, L"Table"},
+    {IDM_INSERT_PICTURES, INSERT_GROUP_ILLUSTRATIONS,
+     RIBBON_INSERT_ICON_PICTURES, L"Pictures"},
+    {IDM_INSERT_SHAPES, INSERT_GROUP_ILLUSTRATIONS,
+     RIBBON_INSERT_ICON_SHAPES, L"Shapes"},
+    {IDM_INSERT_ICONS, INSERT_GROUP_ILLUSTRATIONS,
+     RIBBON_INSERT_ICON_ICONS, L"Icons"},
+    {IDM_INSERT_3D_MODELS, INSERT_GROUP_ILLUSTRATIONS,
+     RIBBON_INSERT_ICON_3D_MODELS, L"3D Models"},
+    {IDM_INSERT_SMARTART, INSERT_GROUP_ILLUSTRATIONS,
+     RIBBON_INSERT_ICON_SMARTART, L"SmartArt"},
+    {IDM_INSERT_CHART, INSERT_GROUP_ILLUSTRATIONS,
+     RIBBON_INSERT_ICON_CHART, L"Chart"},
+    {IDM_INSERT_SCREENSHOT, INSERT_GROUP_ILLUSTRATIONS,
+     RIBBON_INSERT_ICON_SCREENSHOT, L"Screenshot"},
+    {IDM_INSERT_ONLINE_VIDEO, INSERT_GROUP_MEDIA,
+     RIBBON_INSERT_ICON_ONLINE_VIDEO, L"Online Videos"},
+    {IDM_INSERT_LINK, INSERT_GROUP_LINKS,
+     RIBBON_INSERT_ICON_LINK, L"Link"},
+    {IDM_INSERT_BOOKMARK, INSERT_GROUP_LINKS,
+     RIBBON_INSERT_ICON_BOOKMARK, L"Bookmark"},
+    {IDM_INSERT_CROSS_REFERENCE, INSERT_GROUP_LINKS,
+     RIBBON_INSERT_ICON_CROSS_REFERENCE, L"Cross-reference"},
+    {IDM_INSERT_COMMENT, INSERT_GROUP_COMMENTS,
+     RIBBON_INSERT_ICON_COMMENT, L"Comment"},
+    {IDM_INSERT_HEADER, INSERT_GROUP_HEADER_FOOTER,
+     RIBBON_INSERT_ICON_HEADER, L"Header"},
+    {IDM_INSERT_FOOTER, INSERT_GROUP_HEADER_FOOTER,
+     RIBBON_INSERT_ICON_FOOTER, L"Footer"},
+    {IDM_INSERT_PAGE_NUMBER, INSERT_GROUP_HEADER_FOOTER,
+     RIBBON_INSERT_ICON_PAGE_NUMBER, L"Page Number"},
+    {IDM_INSERT_TEXT_BOX, INSERT_GROUP_TEXT,
+     RIBBON_INSERT_ICON_TEXT_BOX, L"Text Box"},
+    {IDM_INSERT_QUICK_PARTS, INSERT_GROUP_TEXT,
+     RIBBON_INSERT_ICON_QUICK_PARTS, L"Quick Parts"},
+    {IDM_INSERT_WORDART, INSERT_GROUP_TEXT,
+     RIBBON_INSERT_ICON_WORDART, L"WordArt"},
+    {IDM_INSERT_DROP_CAP, INSERT_GROUP_TEXT,
+     RIBBON_INSERT_ICON_DROP_CAP, L"Drop Cap"},
+    {IDM_INSERT_SIGNATURE_LINE, INSERT_GROUP_TEXT,
+     RIBBON_INSERT_ICON_SIGNATURE_LINE, L"Signature Line"},
+    {IDM_INSERT_DATETIME, INSERT_GROUP_TEXT,
+     RIBBON_INSERT_ICON_DATETIME, L"Date & Time"},
+    {IDM_INSERT_OBJECT, INSERT_GROUP_TEXT,
+     RIBBON_INSERT_ICON_OBJECT, L"Object"},
+    {IDM_INSERT_EQUATION, INSERT_GROUP_SYMBOLS,
+     RIBBON_INSERT_ICON_EQUATION, L"Equation"},
+    {IDM_INSERT_SYMBOL, INSERT_GROUP_SYMBOLS,
+     RIBBON_INSERT_ICON_SYMBOL, L"Symbol"},
+    {IDM_INSERT_ESIGNATURE_FIELDS, INSERT_GROUP_ESIGNATURE,
+     RIBBON_INSERT_ICON_ESIGNATURE_FIELDS, L"eSignature fields"}
+};
+
+_Static_assert(ARRAYSIZE(expectedInsertControls) == 29,
+               "the Insert ribbon probe must cover every command");
+
+static const WCHAR *const expectedDrawGroupNames[DRAW_GROUP_COUNT] = {
+    L"Input Mode", L"Undo", L"Drawing Tools", L"Stencils", L"Edit",
+    L"Convert", L"Insert", L"Replay", L"Help"
+};
+
+typedef struct ExpectedDrawControl {
+    UINT id;
+    int group;
+    RibbonDrawIcon icon;
+    const WCHAR *caption;
+} ExpectedDrawControl;
+
+static const ExpectedDrawControl expectedDrawControls[] = {
+    {IDM_DRAW_MODE, DRAW_GROUP_INPUT_MODE,
+     RIBBON_DRAW_ICON_DRAW, L"Draw"},
+    {IDM_EDIT_UNDO, DRAW_GROUP_UNDO,
+     RIBBON_DRAW_ICON_UNDO, L"Undo"},
+    {IDM_EDIT_REDO, DRAW_GROUP_UNDO,
+     RIBBON_DRAW_ICON_REDO, L"Redo"},
+    {IDM_DRAW_SELECT, DRAW_GROUP_DRAWING_TOOLS,
+     RIBBON_DRAW_ICON_SELECT, L"Select"},
+    {IDM_DRAW_LASSO_SELECT, DRAW_GROUP_DRAWING_TOOLS,
+     RIBBON_DRAW_ICON_LASSO_SELECT, L"Lasso Select"},
+    {IDM_DRAW_ERASER, DRAW_GROUP_DRAWING_TOOLS,
+     RIBBON_DRAW_ICON_ERASER, L"Eraser"},
+    {IDM_DRAW_PEN_BLACK, DRAW_GROUP_DRAWING_TOOLS,
+     RIBBON_DRAW_ICON_PEN_BLACK, L"Black Pen"},
+    {IDM_DRAW_PEN_RED, DRAW_GROUP_DRAWING_TOOLS,
+     RIBBON_DRAW_ICON_PEN_RED, L"Red Pen"},
+    {IDM_DRAW_PENCIL, DRAW_GROUP_DRAWING_TOOLS,
+     RIBBON_DRAW_ICON_PENCIL, L"Pencil"},
+    {IDM_DRAW_HIGHLIGHTER, DRAW_GROUP_DRAWING_TOOLS,
+     RIBBON_DRAW_ICON_HIGHLIGHTER, L"Yellow Highlighter"},
+    {IDM_DRAW_PEN_BLUE, DRAW_GROUP_DRAWING_TOOLS,
+     RIBBON_DRAW_ICON_PEN_BLUE, L"Blue Pen"},
+    {IDM_DRAW_PEN_GREEN, DRAW_GROUP_DRAWING_TOOLS,
+     RIBBON_DRAW_ICON_PEN_GREEN, L"Green Pen"},
+    {IDM_DRAW_ACTION_PEN, DRAW_GROUP_DRAWING_TOOLS,
+     RIBBON_DRAW_ICON_ACTION_PEN, L"Action Pen"},
+    {IDM_DRAW_ADD_PEN, DRAW_GROUP_DRAWING_TOOLS,
+     RIBBON_DRAW_ICON_ADD_PEN, L"Add Pen"},
+    {IDM_DRAW_RULER, DRAW_GROUP_STENCILS,
+     RIBBON_DRAW_ICON_RULER, L"Ruler"},
+    {IDM_DRAW_FORMAT_BACKGROUND, DRAW_GROUP_EDIT,
+     RIBBON_DRAW_ICON_FORMAT_BACKGROUND, L"Format Background"},
+    {IDM_DRAW_INK_TO_SHAPE, DRAW_GROUP_CONVERT,
+     RIBBON_DRAW_ICON_INK_TO_SHAPE, L"Ink to Shape"},
+    {IDM_DRAW_INK_TO_MATH, DRAW_GROUP_CONVERT,
+     RIBBON_DRAW_ICON_INK_TO_MATH, L"Ink to Math"},
+    {IDM_DRAW_CANVAS, DRAW_GROUP_INSERT,
+     RIBBON_DRAW_ICON_CANVAS, L"Drawing Canvas"},
+    {IDM_DRAW_INK_REPLAY, DRAW_GROUP_REPLAY,
+     RIBBON_DRAW_ICON_REPLAY, L"Ink Replay"},
+    {IDM_DRAW_INK_HELP, DRAW_GROUP_HELP,
+     RIBBON_DRAW_ICON_HELP, L"Ink Help"}
+};
+
+_Static_assert(ARRAYSIZE(expectedDrawControls) == 21,
+               "the Draw ribbon probe must cover every command");
+
+static const WCHAR *const expectedDesignGroupNames[DESIGN_GROUP_COUNT] = {
+    L"Document Formatting", L"Page Background"
+};
+
+typedef struct ExpectedDesignControl {
+    UINT id;
+    int group;
+    RibbonDesignIcon icon;
+    const WCHAR *caption;
+    BOOL stylePreview;
+} ExpectedDesignControl;
+
+static const ExpectedDesignControl expectedDesignControls[] = {
+    {IDM_DESIGN_THEMES, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_THEMES, L"Themes", FALSE},
+    {IDM_DESIGN_STYLE_OFFICE, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_STYLE_PREVIEW, L"Office", TRUE},
+    {IDM_DESIGN_STYLE_BASIC_ELEGANT, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_STYLE_PREVIEW, L"Basic (Elegant)", TRUE},
+    {IDM_DESIGN_STYLE_BASIC_SIMPLE, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_STYLE_PREVIEW, L"Basic (Simple)", TRUE},
+    {IDM_DESIGN_STYLE_BASIC_STYLISH, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_STYLE_PREVIEW, L"Basic (Stylish)", TRUE},
+    {IDM_DESIGN_STYLE_CENTERED, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_STYLE_PREVIEW, L"Centered", TRUE},
+    {IDM_DESIGN_STYLE_CASUAL, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_STYLE_PREVIEW, L"Casual", TRUE},
+    {IDM_DESIGN_STYLE_COMPACT, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_STYLE_PREVIEW, L"Compact", TRUE},
+    {IDM_DESIGN_STYLE_LINES_DISTINCT, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_STYLE_PREVIEW, L"Lines (Distinctive)", TRUE},
+    {IDM_DESIGN_STYLE_LINES_ELEGANT, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_STYLE_PREVIEW, L"Lines (Elegant)", TRUE},
+    {IDM_DESIGN_STYLE_LINES_SIMPLE, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_STYLE_PREVIEW, L"Lines (Simple)", TRUE},
+    {IDM_DESIGN_STYLE_GALLERY_MORE, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_MORE, L"More Style Sets", FALSE},
+    {IDM_DESIGN_COLORS, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_COLORS, L"Colors", FALSE},
+    {IDM_DESIGN_FONTS, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_FONTS, L"Fonts", FALSE},
+    {IDM_DESIGN_PARAGRAPH_SPACING, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_PARAGRAPH_SPACING, L"Paragraph Spacing", FALSE},
+    {IDM_DESIGN_EFFECTS, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_EFFECTS, L"Effects", FALSE},
+    {IDM_DESIGN_SET_AS_DEFAULT, DESIGN_GROUP_DOCUMENT_FORMATTING,
+     RIBBON_DESIGN_ICON_SET_AS_DEFAULT, L"Set as Default", FALSE},
+    {IDM_DESIGN_WATERMARK, DESIGN_GROUP_PAGE_BACKGROUND,
+     RIBBON_DESIGN_ICON_WATERMARK, L"Watermark", FALSE},
+    {IDM_DESIGN_PAGE_COLOR, DESIGN_GROUP_PAGE_BACKGROUND,
+     RIBBON_DESIGN_ICON_PAGE_COLOR, L"Page Color", FALSE},
+    {IDM_DESIGN_PAGE_BORDERS, DESIGN_GROUP_PAGE_BACKGROUND,
+     RIBBON_DESIGN_ICON_PAGE_BORDERS, L"Page Borders", FALSE}
+};
+
+_Static_assert(ARRAYSIZE(expectedDesignControls) == 20,
+               "the Design ribbon probe must cover every main control");
+
+static const WCHAR *const expectedViewGroupNames[VIEW_GROUP_COUNT] = {
+    L"Views", L"Immersive", L"Dark Mode", L"Page Movement", L"Show",
+    L"Zoom", L"Window", L"Macros", L"SharePoint"
+};
+
+typedef struct ExpectedViewControl {
+    UINT id;
+    int group;
+    int icon;
+    const WCHAR *caption;
+    BOOL enabledByDefault;
+} ExpectedViewControl;
+
+static const ExpectedViewControl expectedViewControls[] = {
+    {IDM_VIEW_READ_MODE, VIEW_GROUP_VIEWS, 1, L"Read Mode", TRUE},
+    {IDM_VIEW_PRINT_LAYOUT, VIEW_GROUP_VIEWS, 2, L"Print Layout", TRUE},
+    {IDM_VIEW_WEB_LAYOUT, VIEW_GROUP_VIEWS, 3, L"Web Layout", TRUE},
+    {IDM_VIEW_OUTLINE, VIEW_GROUP_VIEWS, 4, L"Outline", TRUE},
+    {IDM_VIEW_DRAFT, VIEW_GROUP_VIEWS, 5, L"Draft", TRUE},
+    {IDM_VIEW_FOCUS, VIEW_GROUP_IMMERSIVE, 6, L"Focus", TRUE},
+    {IDM_VIEW_IMMERSIVE_READER, VIEW_GROUP_IMMERSIVE, 7,
+     L"Immersive Reader", TRUE},
+    {IDM_VIEW_DARK_MODE, VIEW_GROUP_DARK_MODE, 8,
+     L"Switch Modes", TRUE},
+    {IDM_VIEW_VERTICAL, VIEW_GROUP_PAGE_MOVEMENT, 9,
+     L"Vertical", TRUE},
+    {IDM_VIEW_SIDE_TO_SIDE, VIEW_GROUP_PAGE_MOVEMENT, 10,
+     L"Side to Side", TRUE},
+    {IDM_VIEW_RULER, VIEW_GROUP_SHOW, 11, L"Ruler", TRUE},
+    {IDM_VIEW_GRIDLINES, VIEW_GROUP_SHOW, 12, L"Gridlines", TRUE},
+    {IDM_VIEW_NAVIGATION_PANE, VIEW_GROUP_SHOW, 13,
+     L"Navigation Pane", TRUE},
+    {IDM_VIEW_ZOOM_DIALOG, VIEW_GROUP_ZOOM, 14, L"Zoom", TRUE},
+    {IDM_VIEW_ZOOM_100, VIEW_GROUP_ZOOM, 15, L"100%", TRUE},
+    {IDM_VIEW_ONE_PAGE, VIEW_GROUP_ZOOM, 16, L"One Page", TRUE},
+    {IDM_VIEW_MULTIPLE_PAGES, VIEW_GROUP_ZOOM, 17,
+     L"Multiple Pages", TRUE},
+    {IDM_VIEW_PAGE_WIDTH, VIEW_GROUP_ZOOM, 18, L"Page Width", TRUE},
+    {IDM_VIEW_NEW_WINDOW, VIEW_GROUP_WINDOW, 19, L"New Window", TRUE},
+    {IDM_VIEW_ARRANGE_ALL, VIEW_GROUP_WINDOW, 20, L"Arrange All", TRUE},
+    {IDM_VIEW_SPLIT, VIEW_GROUP_WINDOW, 21, L"Split", TRUE},
+    {IDM_VIEW_SIDE_BY_SIDE, VIEW_GROUP_WINDOW, 22,
+     L"View Side by Side", TRUE},
+    {IDM_VIEW_SYNCHRONOUS_SCROLLING, VIEW_GROUP_WINDOW, 23,
+     L"Synchronous Scrolling", FALSE},
+    {IDM_VIEW_RESET_WINDOW_POSITION, VIEW_GROUP_WINDOW, 24,
+     L"Reset Window Position", FALSE},
+    {IDM_VIEW_SWITCH_WINDOWS, VIEW_GROUP_WINDOW, 25,
+     L"Switch Windows", TRUE},
+    {IDM_VIEW_MACROS, VIEW_GROUP_MACROS, 26, L"Macros", TRUE},
+    {IDM_VIEW_PROPERTIES, VIEW_GROUP_SHAREPOINT, 27,
+     L"Properties", TRUE}
+};
+
+_Static_assert(ARRAYSIZE(expectedViewControls) == 27,
+               "the View ribbon probe must cover every command");
+
 static const WCHAR firstCommentText[] = L"Opening note: caf\x00E9";
 static const WCHAR secondCommentText[] = L"Second-page review note";
 
@@ -100,6 +352,76 @@ static BOOL CALLBACK find_main_window(HWND window, LPARAM data)
         return FALSE;
     }
     return TRUE;
+}
+
+static BOOL CALLBACK find_dialog_window(HWND window, LPARAM data)
+{
+    WindowSearch *search = (WindowSearch *)data;
+    DWORD processId = 0;
+    WCHAR className[32];
+
+    GetWindowThreadProcessId(window, &processId);
+    if (processId != search->processId) {
+        return TRUE;
+    }
+    if (GetClassNameW(window, className, ARRAYSIZE(className)) > 0 &&
+        lstrcmpW(className, L"#32770") == 0) {
+        search->window = window;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL CALLBACK find_design_gallery_window(HWND window, LPARAM data)
+{
+    WindowSearch *search = (WindowSearch *)data;
+    DWORD processId = 0;
+    WCHAR className[64];
+
+    GetWindowThreadProcessId(window, &processId);
+    if (processId != search->processId || !IsWindowVisible(window)) {
+        return TRUE;
+    }
+    if (GetClassNameW(window, className, ARRAYSIZE(className)) > 0 &&
+        lstrcmpW(className, L"WordCraftDesignGallery") == 0) {
+        search->window = window;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static HWND find_open_design_gallery(HWND mainWindow)
+{
+    WindowSearch search;
+
+    if (mainWindow == NULL) {
+        return NULL;
+    }
+    GetWindowThreadProcessId(mainWindow, &search.processId);
+    search.window = NULL;
+    EnumWindows(find_design_gallery_window, (LPARAM)&search);
+    return search.window;
+}
+
+static BOOL accept_next_message_box(DWORD processId)
+{
+    WindowSearch search;
+    int attempt;
+
+    search.processId = processId;
+    search.window = NULL;
+    for (attempt = 0; attempt < 50 && search.window == NULL; ++attempt) {
+        EnumWindows(find_dialog_window, (LPARAM)&search);
+        if (search.window == NULL) {
+            Sleep(100);
+        }
+    }
+    if (search.window == NULL) {
+        return FALSE;
+    }
+    return SendMessageTimeoutW(GetDlgItem(search.window, IDOK), BM_CLICK,
+                               0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                               PROBE_MESSAGE_TIMEOUT_MS, NULL) != 0;
 }
 
 static BOOL CALLBACK find_descendant_control(HWND window, LPARAM data)
@@ -580,6 +902,132 @@ static BOOL query_home_group_rect(HWND window, int group, RECT *rect)
     return TRUE;
 }
 
+static BOOL query_insert_group_rect(HWND window, int group, RECT *rect)
+{
+    LRESULT values[4];
+    int component;
+
+    if (rect == NULL || group < 0 || group >= INSERT_GROUP_COUNT) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    for (component = 0; component < 4; ++component) {
+        if (!query_wordcraft_state(
+                window, WCQ_INSERT_GROUP_RECT_COMPONENT,
+                group * 4 + component, &values[component]) ||
+            values[component] < LONG_MIN ||
+            values[component] > LONG_MAX) {
+            return FALSE;
+        }
+    }
+    rect->left = (LONG)values[0];
+    rect->top = (LONG)values[1];
+    rect->right = (LONG)values[2];
+    rect->bottom = (LONG)values[3];
+    return TRUE;
+}
+
+static BOOL query_draw_group_rect(HWND window, int group, RECT *rect)
+{
+    LRESULT values[4];
+    int component;
+
+    if (rect == NULL || group < 0 || group >= DRAW_GROUP_COUNT) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    for (component = 0; component < 4; ++component) {
+        if (!query_wordcraft_state(
+                window, WCQ_DRAW_GROUP_RECT_COMPONENT,
+                group * 4 + component, &values[component]) ||
+            values[component] < LONG_MIN ||
+            values[component] > LONG_MAX) {
+            return FALSE;
+        }
+    }
+    rect->left = (LONG)values[0];
+    rect->top = (LONG)values[1];
+    rect->right = (LONG)values[2];
+    rect->bottom = (LONG)values[3];
+    return TRUE;
+}
+
+static BOOL query_design_group_rect(HWND window, int group, RECT *rect)
+{
+    LRESULT values[4];
+    int component;
+
+    if (rect == NULL || group < 0 || group >= DESIGN_GROUP_COUNT) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    for (component = 0; component < 4; ++component) {
+        if (!query_wordcraft_state(
+                window, WCQ_DESIGN_GROUP_RECT_COMPONENT,
+                group * 4 + component, &values[component]) ||
+            values[component] < LONG_MIN ||
+            values[component] > LONG_MAX) {
+            return FALSE;
+        }
+    }
+    rect->left = (LONG)values[0];
+    rect->top = (LONG)values[1];
+    rect->right = (LONG)values[2];
+    rect->bottom = (LONG)values[3];
+    return TRUE;
+}
+
+static BOOL query_design_gallery_item_rect(HWND window, int item, RECT *rect)
+{
+    LRESULT values[4];
+    int component;
+
+    if (rect == NULL || item < 0 ||
+        item >= DESIGN_STYLE_SET_COUNT + 2) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    for (component = 0; component < 4; ++component) {
+        if (!query_wordcraft_state(
+                window, WCQ_DESIGN_GALLERY_ITEM_RECT_COMPONENT,
+                item * 4 + component, &values[component]) ||
+            values[component] < LONG_MIN ||
+            values[component] > LONG_MAX) {
+            return FALSE;
+        }
+    }
+    rect->left = (LONG)values[0];
+    rect->top = (LONG)values[1];
+    rect->right = (LONG)values[2];
+    rect->bottom = (LONG)values[3];
+    return TRUE;
+}
+
+static BOOL query_view_group_rect(HWND window, int group, RECT *rect)
+{
+    LRESULT values[4];
+    int component;
+
+    if (rect == NULL || group < 0 || group >= VIEW_GROUP_COUNT) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    for (component = 0; component < 4; ++component) {
+        if (!query_wordcraft_state(
+                window, WCQ_VIEW_GROUP_RECT_COMPONENT,
+                group * 4 + component, &values[component]) ||
+            values[component] < LONG_MIN ||
+            values[component] > LONG_MAX) {
+            return FALSE;
+        }
+    }
+    rect->left = (LONG)values[0];
+    rect->top = (LONG)values[1];
+    rect->right = (LONG)values[2];
+    rect->bottom = (LONG)values[3];
+    return TRUE;
+}
+
 static BOOL home_control_is_style_button(UINT id)
 {
     return id >= IDM_STYLE_NORMAL && id <= IDM_STYLE_TITLE;
@@ -707,6 +1155,1826 @@ static BOOL validate_home_layout_contract(HWND window, HWND formatBar,
     return TRUE;
 }
 
+static BOOL validate_insert_layout_contract(HWND window, HWND formatBar,
+                                            int expectedMode)
+{
+    RECT client;
+    RECT previous = {0};
+    LRESULT groupCount = 0;
+    LRESULT controlCount = 0;
+    LRESULT groupPaintCount = 0;
+    LRESULT mode = 0;
+    size_t index;
+
+    if (window == NULL || formatBar == NULL ||
+        expectedMode < RIBBON_LAYOUT_FULL ||
+        expectedMode > RIBBON_LAYOUT_COLLAPSED ||
+        !GetClientRect(formatBar, &client) ||
+        !query_wordcraft_state(window, WCQ_INSERT_GROUP_COUNT, 0,
+                               &groupCount) ||
+        !query_wordcraft_state(window, WCQ_INSERT_CONTROL_COUNT, 0,
+                               &controlCount) ||
+        !query_wordcraft_state(window, WCQ_INSERT_GROUP_PAINT_COUNT, 0,
+                               &groupPaintCount) ||
+        !query_wordcraft_state(window, WCQ_INSERT_LAYOUT_MODE, 0, &mode) ||
+        groupCount != INSERT_GROUP_COUNT ||
+        controlCount != (LRESULT)ARRAYSIZE(expectedInsertControls) ||
+        mode != expectedMode || client.right <= client.left ||
+        client.bottom <= client.top || groupPaintCount < 0) {
+        return FALSE;
+    }
+
+    for (index = 0; index < INSERT_GROUP_COUNT; ++index) {
+        RECT rect;
+        LRESULT hash = 0;
+        LRESULT flags = 0;
+        UINT required = INSERT_GROUP_FLAG_VISIBLE;
+
+        if (expectedMode == RIBBON_LAYOUT_COLLAPSED) {
+            required |= INSERT_GROUP_FLAG_COLLAPSED;
+        } else {
+            required |= INSERT_GROUP_FLAG_LABEL_VISIBLE;
+        }
+
+        if (!query_wordcraft_state(window, WCQ_INSERT_GROUP_NAME_HASH,
+                                   (LPARAM)index, &hash) ||
+            !query_wordcraft_state(window, WCQ_INSERT_GROUP_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            !query_insert_group_rect(window, (int)index, &rect) ||
+            (UINT)(DWORD_PTR)hash !=
+                probe_text_hash(expectedInsertGroupNames[index]) ||
+            ((UINT)flags & required) != required ||
+            (expectedMode == RIBBON_LAYOUT_COLLAPSED
+                 ? ((UINT)flags & INSERT_GROUP_FLAG_LABEL_VISIBLE) != 0
+                 : ((UINT)flags & INSERT_GROUP_FLAG_COLLAPSED) != 0) ||
+            rect.left < client.left || rect.top < client.top ||
+            rect.right > client.right || rect.bottom > client.bottom ||
+            rect.right <= rect.left || rect.bottom <= rect.top ||
+            (index > 0 && rect.left < previous.right)) {
+            return FALSE;
+        }
+        previous = rect;
+    }
+
+    for (index = 0; index < ARRAYSIZE(expectedInsertControls); ++index) {
+        const ExpectedInsertControl *expected =
+            &expectedInsertControls[index];
+        RECT controlRect;
+        RECT groupRect;
+        HWND control;
+        WCHAR caption[64] = L"";
+        LRESULT id = 0;
+        LRESULT group = -1;
+        LRESULT flags = 0;
+        LRESULT icon = RIBBON_INSERT_ICON_NONE;
+        UINT required = INSERT_CONTROL_FLAG_CREATED |
+                        INSERT_CONTROL_FLAG_VISIBLE |
+                        INSERT_CONTROL_FLAG_ENABLED |
+                        INSERT_CONTROL_FLAG_TABSTOP |
+                        INSERT_CONTROL_FLAG_HAS_ICON;
+
+        control = find_control(formatBar, (int)expected->id);
+        if (control == NULL ||
+            !query_wordcraft_state(window, WCQ_INSERT_CONTROL_ID,
+                                   (LPARAM)index, &id) ||
+            !query_wordcraft_state(window, WCQ_INSERT_CONTROL_GROUP,
+                                   (LPARAM)index, &group) ||
+            !query_wordcraft_state(window, WCQ_INSERT_CONTROL_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            !query_wordcraft_state(window, WCQ_INSERT_CONTROL_ICON,
+                                   (LPARAM)index, &icon) ||
+            id != expected->id || group != expected->group ||
+            icon != expected->icon ||
+            ((UINT)flags & required) != required ||
+            !get_window_text_bounded(control, caption,
+                                     ARRAYSIZE(caption)) ||
+            wcscmp(caption, expected->caption) != 0 ||
+            !GetWindowRect(control, &controlRect) ||
+            !query_insert_group_rect(window, expected->group,
+                                     &groupRect)) {
+            return FALSE;
+        }
+        MapWindowPoints(HWND_DESKTOP, formatBar,
+                        (POINT *)&controlRect, 2);
+        if (controlRect.right <= controlRect.left ||
+            controlRect.bottom <= controlRect.top ||
+            controlRect.left < groupRect.left ||
+            controlRect.top < groupRect.top ||
+            controlRect.right > groupRect.right ||
+            controlRect.bottom > groupRect.bottom) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL force_insert_ribbon_paint(HWND window, HWND formatBar)
+{
+    LRESULT groupBefore = 0;
+    LRESULT groupAfter = 0;
+    LRESULT iconBefore[ARRAYSIZE(expectedInsertControls)];
+    HDC referenceDc = NULL;
+    HDC memoryDc = NULL;
+    HBITMAP bitmap = NULL;
+    HGDIOBJ previousBitmap = NULL;
+    int attempt;
+    size_t index;
+
+    if (window == NULL || formatBar == NULL ||
+        !query_wordcraft_state(window, WCQ_INSERT_GROUP_PAINT_COUNT, 0,
+                               &groupBefore)) {
+        return FALSE;
+    }
+    for (index = 0; index < ARRAYSIZE(expectedInsertControls); ++index) {
+        if (!query_wordcraft_state(window, WCQ_INSERT_ICON_PAINT_COUNT,
+                                   (LPARAM)index, &iconBefore[index])) {
+            return FALSE;
+        }
+    }
+
+    if (!RedrawWindow(formatBar, NULL, NULL,
+                      RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN |
+                          RDW_UPDATENOW) ||
+        !send_message_bounded(formatBar, WM_PAINT, 0, 0, NULL)) {
+        return FALSE;
+    }
+    for (index = 0; index < ARRAYSIZE(expectedInsertControls); ++index) {
+        HWND control =
+            find_control(formatBar, (int)expectedInsertControls[index].id);
+        if (control == NULL ||
+            !RedrawWindow(control, NULL, NULL,
+                          RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW) ||
+            !send_message_bounded(control, WM_PAINT, 0, 0, NULL)) {
+            return FALSE;
+        }
+    }
+    /*
+     * The probe launches the top-level window hidden. WM_PRINTCLIENT against
+     * a real compatible bitmap still exercises each native button's
+     * NM_CUSTOMDRAW path without flashing a test window on the desktop.
+     */
+    referenceDc = GetDC(formatBar);
+    if (referenceDc != NULL) {
+        memoryDc = CreateCompatibleDC(referenceDc);
+        bitmap = CreateCompatibleBitmap(referenceDc, 256, 128);
+        if (memoryDc != NULL && bitmap != NULL) {
+            previousBitmap = SelectObject(memoryDc, bitmap);
+            for (index = 0; index < ARRAYSIZE(expectedInsertControls);
+                 ++index) {
+                HWND control = find_control(
+                    formatBar, (int)expectedInsertControls[index].id);
+                if (control != NULL) {
+                    send_message_bounded(
+                        control, WM_PRINTCLIENT, (WPARAM)memoryDc,
+                        PRF_CLIENT | PRF_ERASEBKGND, NULL);
+                }
+            }
+            SelectObject(memoryDc, previousBitmap);
+        }
+        if (bitmap != NULL) {
+            DeleteObject(bitmap);
+        }
+        if (memoryDc != NULL) {
+            DeleteDC(memoryDc);
+        }
+        ReleaseDC(formatBar, referenceDc);
+    }
+
+    for (attempt = 0; attempt < 100; ++attempt) {
+        BOOL allIconsPainted = TRUE;
+
+        if (!query_wordcraft_state(window, WCQ_INSERT_GROUP_PAINT_COUNT, 0,
+                                   &groupAfter)) {
+            return FALSE;
+        }
+        for (index = 0; index < ARRAYSIZE(expectedInsertControls); ++index) {
+            LRESULT current = 0;
+            if (!query_wordcraft_state(window,
+                                       WCQ_INSERT_ICON_PAINT_COUNT,
+                                       (LPARAM)index, &current)) {
+                return FALSE;
+            }
+            if (current <= iconBefore[index]) {
+                allIconsPainted = FALSE;
+            }
+        }
+        if (groupAfter > groupBefore && allIconsPainted) {
+            return TRUE;
+        }
+        Sleep(20);
+    }
+    fwprintf(stderr,
+             L"Insert paint telemetry stalled (groups %ld -> %ld)",
+             (long)groupBefore, (long)groupAfter);
+    for (index = 0; index < ARRAYSIZE(expectedInsertControls); ++index) {
+        LRESULT current = 0;
+        if (query_wordcraft_state(window, WCQ_INSERT_ICON_PAINT_COUNT,
+                                  (LPARAM)index, &current) &&
+            current <= iconBefore[index]) {
+            fwprintf(stderr, L" %s:%ld->%ld",
+                     expectedInsertControls[index].caption,
+                     (long)iconBefore[index], (long)current);
+        }
+    }
+    fwprintf(stderr, L"\n");
+    return FALSE;
+}
+
+static BOOL insert_controls_are_hidden(HWND window, HWND formatBar)
+{
+    size_t index;
+
+    if (window == NULL || formatBar == NULL) {
+        return FALSE;
+    }
+    for (index = 0; index < INSERT_GROUP_COUNT; ++index) {
+        LRESULT flags = 0;
+        if (!query_wordcraft_state(window, WCQ_INSERT_GROUP_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            ((UINT)flags & (INSERT_GROUP_FLAG_VISIBLE |
+                            INSERT_GROUP_FLAG_LABEL_VISIBLE)) != 0) {
+            fwprintf(stderr,
+                     L"Insert group %lu remained visible (flags=0x%lx)\n",
+                     (unsigned long)index, (unsigned long)flags);
+            return FALSE;
+        }
+    }
+    for (index = 0; index < ARRAYSIZE(expectedInsertControls); ++index) {
+        HWND control =
+            find_control(formatBar, (int)expectedInsertControls[index].id);
+        LRESULT flags = 0;
+        if (control == NULL ||
+            !query_wordcraft_state(window, WCQ_INSERT_CONTROL_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            ((UINT)flags & INSERT_CONTROL_FLAG_VISIBLE) != 0 ||
+            (GetWindowLongPtrW(control, GWL_STYLE) & WS_VISIBLE) != 0) {
+            fwprintf(stderr,
+                     L"Insert control %s remained visible (flags=0x%lx style=0x%lx)\n",
+                     expectedInsertControls[index].caption,
+                     (unsigned long)flags,
+                     (unsigned long)GetWindowLongPtrW(control, GWL_STYLE));
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL draw_control_is_tool(UINT id)
+{
+    return id >= IDM_DRAW_SELECT && id <= IDM_DRAW_ACTION_PEN;
+}
+
+static BOOL validate_draw_layout_contract(HWND window, HWND editor,
+                                          HWND formatBar,
+                                          int expectedMode)
+{
+    RECT client;
+    RECT previous = {0};
+    LRESULT groupCount = 0;
+    LRESULT controlCount = 0;
+    LRESULT groupPaintCount = 0;
+    LRESULT mode = 0;
+    LRESULT activeTool = 0;
+    LRESULT rulerVisible = 0;
+    LRESULT backgroundRuled = 0;
+    LRESULT canUndo = 0;
+    LRESULT canRedo = 0;
+    size_t index;
+
+    if (window == NULL || editor == NULL || formatBar == NULL ||
+        expectedMode < RIBBON_LAYOUT_FULL ||
+        expectedMode > RIBBON_LAYOUT_COLLAPSED ||
+        !GetClientRect(formatBar, &client) ||
+        !query_wordcraft_state(window, WCQ_DRAW_GROUP_COUNT, 0,
+                               &groupCount) ||
+        !query_wordcraft_state(window, WCQ_DRAW_CONTROL_COUNT, 0,
+                               &controlCount) ||
+        !query_wordcraft_state(window, WCQ_DRAW_GROUP_PAINT_COUNT, 0,
+                               &groupPaintCount) ||
+        !query_wordcraft_state(window, WCQ_DRAW_LAYOUT_MODE, 0, &mode) ||
+        !query_wordcraft_state(window, WCQ_DRAW_ACTIVE_TOOL, 0,
+                               &activeTool) ||
+        !query_wordcraft_state(window, WCQ_DRAW_RULER_VISIBLE, 0,
+                               &rulerVisible) ||
+        !query_wordcraft_state(window, WCQ_DRAW_BACKGROUND_RULED, 0,
+                               &backgroundRuled) ||
+        !send_message_bounded(editor, EM_CANUNDO, 0, 0, &canUndo) ||
+        !send_message_bounded(editor, EM_CANREDO, 0, 0, &canRedo) ||
+        groupCount != DRAW_GROUP_COUNT ||
+        controlCount != (LRESULT)ARRAYSIZE(expectedDrawControls) ||
+        mode != expectedMode || client.right <= client.left ||
+        client.bottom <= client.top || groupPaintCount < 0 ||
+        !draw_control_is_tool((UINT)activeTool) ||
+        (rulerVisible != 0 && rulerVisible != 1) ||
+        (backgroundRuled != 0 && backgroundRuled != 1)) {
+        fwprintf(
+            stderr,
+            L"Draw layout precondition mismatch mode=%ld/%d groups=%ld/%d controls=%ld/%lu active=%ld ruler=%ld background=%ld client=%ldx%ld paint=%ld undo=%ld redo=%ld\n",
+            (long)mode, expectedMode, (long)groupCount,
+            DRAW_GROUP_COUNT, (long)controlCount,
+            (unsigned long)ARRAYSIZE(expectedDrawControls),
+            (long)activeTool, (long)rulerVisible,
+            (long)backgroundRuled,
+            client.right - client.left, client.bottom - client.top,
+            (long)groupPaintCount, (long)canUndo, (long)canRedo);
+        return FALSE;
+    }
+
+    for (index = 0; index < DRAW_GROUP_COUNT; ++index) {
+        RECT rect;
+        LRESULT hash = 0;
+        LRESULT flags = 0;
+        UINT expectedFlags = DRAW_GROUP_FLAG_VISIBLE;
+        const UINT knownFlags = DRAW_GROUP_FLAG_VISIBLE |
+                                DRAW_GROUP_FLAG_LABEL_VISIBLE |
+                                DRAW_GROUP_FLAG_COLLAPSED;
+
+        if (expectedMode == RIBBON_LAYOUT_COLLAPSED) {
+            expectedFlags |= DRAW_GROUP_FLAG_COLLAPSED;
+        } else {
+            expectedFlags |= DRAW_GROUP_FLAG_LABEL_VISIBLE;
+        }
+        if (!query_wordcraft_state(window, WCQ_DRAW_GROUP_NAME_HASH,
+                                   (LPARAM)index, &hash) ||
+            !query_wordcraft_state(window, WCQ_DRAW_GROUP_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            !query_draw_group_rect(window, (int)index, &rect) ||
+            (UINT)(DWORD_PTR)hash !=
+                probe_text_hash(expectedDrawGroupNames[index]) ||
+            ((UINT)flags & knownFlags) != expectedFlags ||
+            rect.left < client.left || rect.top < client.top ||
+            rect.right > client.right || rect.bottom > client.bottom ||
+            rect.right <= rect.left || rect.bottom <= rect.top ||
+            (index > 0 && rect.left < previous.right)) {
+            fwprintf(
+                stderr,
+                L"Draw group %lu contract mismatch hash=0x%lx expected=0x%lx flags=0x%lx expected_flags=0x%x rect=%ld,%ld,%ld,%ld client=%ld,%ld,%ld,%ld previous_right=%ld\n",
+                (unsigned long)index, (unsigned long)hash,
+                (unsigned long)probe_text_hash(
+                    expectedDrawGroupNames[index]),
+                (unsigned long)flags, expectedFlags,
+                rect.left, rect.top, rect.right, rect.bottom,
+                client.left, client.top, client.right, client.bottom,
+                previous.right);
+            return FALSE;
+        }
+        previous = rect;
+    }
+
+    for (index = 0; index < ARRAYSIZE(expectedDrawControls); ++index) {
+        const ExpectedDrawControl *expected =
+            &expectedDrawControls[index];
+        RECT controlRect;
+        RECT groupRect;
+        HWND control;
+        WCHAR caption[64] = L"";
+        LRESULT id = 0;
+        LRESULT group = -1;
+        LRESULT flags = 0;
+        LRESULT icon = RIBBON_DRAW_ICON_NONE;
+        BOOL enabled = expected->id == IDM_EDIT_UNDO
+                           ? canUndo != 0
+                           : expected->id == IDM_EDIT_REDO
+                                 ? canRedo != 0
+                                 : TRUE;
+        BOOL checked =
+            expected->id == (UINT)activeTool ||
+            (expected->id == IDM_DRAW_RULER && rulerVisible != 0) ||
+            (expected->id == IDM_DRAW_FORMAT_BACKGROUND &&
+             backgroundRuled != 0);
+        UINT expectedFlags = DRAW_CONTROL_FLAG_CREATED |
+                             DRAW_CONTROL_FLAG_VISIBLE |
+                             DRAW_CONTROL_FLAG_TABSTOP |
+                             DRAW_CONTROL_FLAG_HAS_ICON |
+                             (enabled ? DRAW_CONTROL_FLAG_ENABLED : 0) |
+                             (checked ? DRAW_CONTROL_FLAG_CHECKED : 0);
+        const UINT knownFlags = DRAW_CONTROL_FLAG_CREATED |
+                                DRAW_CONTROL_FLAG_VISIBLE |
+                                DRAW_CONTROL_FLAG_ENABLED |
+                                DRAW_CONTROL_FLAG_TABSTOP |
+                                DRAW_CONTROL_FLAG_HAS_ICON |
+                                DRAW_CONTROL_FLAG_CHECKED;
+
+        control = find_control(formatBar, (int)expected->id);
+        if (control == NULL ||
+            !query_wordcraft_state(window, WCQ_DRAW_CONTROL_ID,
+                                   (LPARAM)index, &id) ||
+            !query_wordcraft_state(window, WCQ_DRAW_CONTROL_GROUP,
+                                   (LPARAM)index, &group) ||
+            !query_wordcraft_state(window, WCQ_DRAW_CONTROL_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            !query_wordcraft_state(window, WCQ_DRAW_CONTROL_ICON,
+                                   (LPARAM)index, &icon) ||
+            id != expected->id || group != expected->group ||
+            icon != expected->icon ||
+            ((UINT)flags & knownFlags) != expectedFlags ||
+            !get_window_text_bounded(control, caption,
+                                     ARRAYSIZE(caption)) ||
+            wcscmp(caption, expected->caption) != 0 ||
+            !GetWindowRect(control, &controlRect) ||
+            !query_draw_group_rect(window, expected->group,
+                                   &groupRect)) {
+            fwprintf(
+                stderr,
+                L"Draw control %lu (%s) contract mismatch hwnd=%p id=%ld/%u group=%ld/%d flags=0x%lx/0x%x icon=%ld/%d caption='%s'\n",
+                (unsigned long)index, expected->caption, (void *)control,
+                (long)id, expected->id, (long)group, expected->group,
+                (unsigned long)flags, expectedFlags, (long)icon,
+                expected->icon, caption);
+            return FALSE;
+        }
+        MapWindowPoints(HWND_DESKTOP, formatBar,
+                        (POINT *)&controlRect, 2);
+        if (controlRect.right <= controlRect.left ||
+            controlRect.bottom <= controlRect.top ||
+            controlRect.left < groupRect.left ||
+            controlRect.top < groupRect.top ||
+            controlRect.right > groupRect.right ||
+            controlRect.bottom > groupRect.bottom) {
+            fwprintf(
+                stderr,
+                L"Draw control %lu (%s) geometry mismatch control=%ld,%ld,%ld,%ld group=%ld,%ld,%ld,%ld\n",
+                (unsigned long)index, expected->caption,
+                controlRect.left, controlRect.top,
+                controlRect.right, controlRect.bottom,
+                groupRect.left, groupRect.top,
+                groupRect.right, groupRect.bottom);
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL force_draw_ribbon_offscreen_paint(HWND window,
+                                               HWND formatBar)
+{
+    RECT client;
+    LRESULT groupBefore = 0;
+    LRESULT groupAfter = 0;
+    LRESULT iconBefore[ARRAYSIZE(expectedDrawControls)];
+    HDC referenceDc = NULL;
+    HDC memoryDc = NULL;
+    HBITMAP bitmap = NULL;
+    HGDIOBJ previousBitmap = NULL;
+    BOOL success = FALSE;
+    size_t index;
+
+    if (window == NULL || formatBar == NULL ||
+        !GetClientRect(formatBar, &client) ||
+        client.right <= client.left || client.bottom <= client.top ||
+        !query_wordcraft_state(window, WCQ_DRAW_GROUP_PAINT_COUNT, 0,
+                               &groupBefore)) {
+        return FALSE;
+    }
+    for (index = 0; index < ARRAYSIZE(expectedDrawControls); ++index) {
+        if (!query_wordcraft_state(window, WCQ_DRAW_ICON_PAINT_COUNT,
+                                   (LPARAM)index, &iconBefore[index])) {
+            return FALSE;
+        }
+    }
+
+    referenceDc = GetDC(formatBar);
+    if (referenceDc == NULL) {
+        goto cleanup;
+    }
+    memoryDc = CreateCompatibleDC(referenceDc);
+    bitmap = CreateCompatibleBitmap(
+        referenceDc, client.right - client.left,
+        client.bottom - client.top);
+    if (memoryDc == NULL || bitmap == NULL) {
+        goto cleanup;
+    }
+    previousBitmap = SelectObject(memoryDc, bitmap);
+    if (previousBitmap == NULL ||
+        previousBitmap == (HGDIOBJ)HGDI_ERROR ||
+        !send_message_bounded(formatBar, WM_PRINTCLIENT,
+                              (WPARAM)memoryDc,
+                              PRF_CLIENT | PRF_ERASEBKGND, NULL)) {
+        goto cleanup;
+    }
+    for (index = 0; index < ARRAYSIZE(expectedDrawControls); ++index) {
+        HWND control =
+            find_control(formatBar, (int)expectedDrawControls[index].id);
+        if (control == NULL ||
+            !send_message_bounded(control, WM_PRINTCLIENT,
+                                  (WPARAM)memoryDc,
+                                  PRF_CLIENT | PRF_ERASEBKGND, NULL)) {
+            goto cleanup;
+        }
+    }
+    GdiFlush();
+    if (!query_wordcraft_state(window, WCQ_DRAW_GROUP_PAINT_COUNT, 0,
+                               &groupAfter) ||
+        groupAfter <= groupBefore) {
+        goto cleanup;
+    }
+    for (index = 0; index < ARRAYSIZE(expectedDrawControls); ++index) {
+        LRESULT iconAfter = 0;
+        if (!query_wordcraft_state(window, WCQ_DRAW_ICON_PAINT_COUNT,
+                                   (LPARAM)index, &iconAfter) ||
+            iconAfter <= iconBefore[index]) {
+            fwprintf(stderr,
+                     L"Draw offscreen icon paint stalled for %s (%ld -> %ld)\n",
+                     expectedDrawControls[index].caption,
+                     (long)iconBefore[index], (long)iconAfter);
+            goto cleanup;
+        }
+    }
+    success = TRUE;
+
+cleanup:
+    if (memoryDc != NULL && previousBitmap != NULL &&
+        previousBitmap != (HGDIOBJ)HGDI_ERROR) {
+        SelectObject(memoryDc, previousBitmap);
+    }
+    if (bitmap != NULL) {
+        DeleteObject(bitmap);
+    }
+    if (memoryDc != NULL) {
+        DeleteDC(memoryDc);
+    }
+    if (referenceDc != NULL) {
+        ReleaseDC(formatBar, referenceDc);
+    }
+    if (!success && groupAfter <= groupBefore) {
+        fwprintf(stderr,
+                 L"Draw offscreen group paint stalled (%ld -> %ld)\n",
+                 (long)groupBefore, (long)groupAfter);
+    }
+    return success;
+}
+
+static BOOL draw_controls_are_hidden(HWND window, HWND formatBar)
+{
+    size_t index;
+
+    if (window == NULL || formatBar == NULL) {
+        return FALSE;
+    }
+    for (index = 0; index < DRAW_GROUP_COUNT; ++index) {
+        LRESULT flags = 0;
+        if (!query_wordcraft_state(window, WCQ_DRAW_GROUP_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            ((UINT)flags & (DRAW_GROUP_FLAG_VISIBLE |
+                            DRAW_GROUP_FLAG_LABEL_VISIBLE)) != 0) {
+            fwprintf(stderr,
+                     L"Draw group %lu remained visible (flags=0x%lx)\n",
+                     (unsigned long)index, (unsigned long)flags);
+            return FALSE;
+        }
+    }
+    for (index = 0; index < ARRAYSIZE(expectedDrawControls); ++index) {
+        HWND control =
+            find_control(formatBar, (int)expectedDrawControls[index].id);
+        LRESULT flags = 0;
+        if (control == NULL ||
+            !query_wordcraft_state(window, WCQ_DRAW_CONTROL_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            ((UINT)flags & DRAW_CONTROL_FLAG_VISIBLE) != 0 ||
+            (GetWindowLongPtrW(control, GWL_STYLE) & WS_VISIBLE) != 0) {
+            fwprintf(stderr,
+                     L"Draw control %s remained visible (flags=0x%lx style=0x%lx)\n",
+                     expectedDrawControls[index].caption,
+                     (unsigned long)flags,
+                     (unsigned long)GetWindowLongPtrW(control, GWL_STYLE));
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL design_preview_visible_in_mode(size_t controlIndex,
+                                           int layoutMode)
+{
+    size_t previewIndex;
+
+    if (controlIndex == 0 ||
+        controlIndex > 10 ||
+        !expectedDesignControls[controlIndex].stylePreview) {
+        return TRUE;
+    }
+    previewIndex = controlIndex - 1;
+    if (layoutMode == RIBBON_LAYOUT_FULL) {
+        return TRUE;
+    }
+    if (layoutMode == RIBBON_LAYOUT_COMPACT) {
+        return previewIndex < 4;
+    }
+    return previewIndex == 0;
+}
+
+static BOOL validate_design_layout_contract(HWND window, HWND formatBar,
+                                             int expectedMode)
+{
+    RECT client;
+    RECT previous = {0};
+    LRESULT groupCount = 0;
+    LRESULT controlCount = 0;
+    LRESULT groupPaintCount = 0;
+    LRESULT mode = 0;
+    LRESULT activeStyleSet = -1;
+    LRESULT galleryVisible = -1;
+    LRESULT colorScheme = -1;
+    LRESULT fontScheme = -1;
+    LRESULT paragraphSpacing = -1;
+    LRESULT effect = -1;
+    size_t index;
+
+    if (window == NULL || formatBar == NULL ||
+        expectedMode < RIBBON_LAYOUT_FULL ||
+        expectedMode > RIBBON_LAYOUT_COLLAPSED ||
+        !GetClientRect(formatBar, &client) ||
+        !query_wordcraft_state(window, WCQ_DESIGN_GROUP_COUNT, 0,
+                               &groupCount) ||
+        !query_wordcraft_state(window, WCQ_DESIGN_CONTROL_COUNT, 0,
+                               &controlCount) ||
+        !query_wordcraft_state(window, WCQ_DESIGN_GROUP_PAINT_COUNT, 0,
+                               &groupPaintCount) ||
+        !query_wordcraft_state(window, WCQ_DESIGN_LAYOUT_MODE, 0, &mode) ||
+        !query_wordcraft_state(window, WCQ_DESIGN_ACTIVE_STYLE_SET, 0,
+                               &activeStyleSet) ||
+        !query_wordcraft_state(window, WCQ_DESIGN_GALLERY_VISIBLE, 0,
+                               &galleryVisible) ||
+        !query_wordcraft_state(window, WCQ_DESIGN_COLOR_SCHEME, 0,
+                               &colorScheme) ||
+        !query_wordcraft_state(window, WCQ_DESIGN_FONT_SCHEME, 0,
+                               &fontScheme) ||
+        !query_wordcraft_state(window, WCQ_DESIGN_PARAGRAPH_SPACING, 0,
+                               &paragraphSpacing) ||
+        !query_wordcraft_state(window, WCQ_DESIGN_EFFECT, 0, &effect) ||
+        groupCount != DESIGN_GROUP_COUNT ||
+        controlCount != (LRESULT)ARRAYSIZE(expectedDesignControls) ||
+        mode != expectedMode || client.right <= client.left ||
+        client.bottom <= client.top || groupPaintCount < 0 ||
+        activeStyleSet != DESIGN_STYLE_SET_OFFICE ||
+        galleryVisible != 0 ||
+        colorScheme != DESIGN_COLOR_SCHEME_OFFICE ||
+        fontScheme != DESIGN_FONT_SCHEME_OFFICE ||
+        paragraphSpacing != DESIGN_PARAGRAPH_SPACING_OPEN ||
+        effect != DESIGN_EFFECT_OFFICE) {
+        fwprintf(
+            stderr,
+            L"Design layout precondition mismatch mode=%ld/%d groups=%ld/%d controls=%ld/%lu active=%ld gallery=%ld color=%ld font=%ld spacing=%ld effect=%ld client=%ldx%ld paint=%ld\n",
+            (long)mode, expectedMode, (long)groupCount,
+            DESIGN_GROUP_COUNT, (long)controlCount,
+            (unsigned long)ARRAYSIZE(expectedDesignControls),
+            (long)activeStyleSet, (long)galleryVisible,
+            (long)colorScheme, (long)fontScheme,
+            (long)paragraphSpacing, (long)effect,
+            client.right - client.left, client.bottom - client.top,
+            (long)groupPaintCount);
+        return FALSE;
+    }
+
+    for (index = 0; index < DESIGN_GROUP_COUNT; ++index) {
+        RECT rect;
+        LRESULT hash = 0;
+        LRESULT flags = 0;
+        UINT expectedFlags = DESIGN_GROUP_FLAG_VISIBLE;
+        const UINT knownFlags = DESIGN_GROUP_FLAG_VISIBLE |
+                                DESIGN_GROUP_FLAG_LABEL_VISIBLE |
+                                DESIGN_GROUP_FLAG_COLLAPSED |
+                                DESIGN_GROUP_FLAG_GALLERY_OPEN;
+
+        if (expectedMode == RIBBON_LAYOUT_COLLAPSED) {
+            expectedFlags |= DESIGN_GROUP_FLAG_COLLAPSED;
+        } else {
+            expectedFlags |= DESIGN_GROUP_FLAG_LABEL_VISIBLE;
+        }
+        if (!query_wordcraft_state(window, WCQ_DESIGN_GROUP_NAME_HASH,
+                                   (LPARAM)index, &hash) ||
+            !query_wordcraft_state(window, WCQ_DESIGN_GROUP_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            !query_design_group_rect(window, (int)index, &rect) ||
+            (UINT)(DWORD_PTR)hash !=
+                probe_text_hash(expectedDesignGroupNames[index]) ||
+            ((UINT)flags & knownFlags) != expectedFlags ||
+            rect.left < client.left || rect.top < client.top ||
+            rect.right > client.right || rect.bottom > client.bottom ||
+            rect.right <= rect.left || rect.bottom <= rect.top ||
+            (index > 0 && rect.left < previous.right)) {
+            fwprintf(
+                stderr,
+                L"Design group %lu contract mismatch hash=0x%lx expected=0x%lx flags=0x%lx expected_flags=0x%x rect=%ld,%ld,%ld,%ld client=%ld,%ld,%ld,%ld previous_right=%ld\n",
+                (unsigned long)index, (unsigned long)hash,
+                (unsigned long)probe_text_hash(
+                    expectedDesignGroupNames[index]),
+                (unsigned long)flags, expectedFlags,
+                rect.left, rect.top, rect.right, rect.bottom,
+                client.left, client.top, client.right, client.bottom,
+                previous.right);
+            return FALSE;
+        }
+        previous = rect;
+    }
+
+    for (index = 0; index < ARRAYSIZE(expectedDesignControls); ++index) {
+        const ExpectedDesignControl *expected =
+            &expectedDesignControls[index];
+        RECT controlRect;
+        RECT groupRect;
+        HWND control;
+        WCHAR caption[64] = L"";
+        LRESULT id = 0;
+        LRESULT group = -1;
+        LRESULT flags = 0;
+        LRESULT icon = RIBBON_DESIGN_ICON_NONE;
+        BOOL visible =
+            !expected->stylePreview ||
+            design_preview_visible_in_mode(index, expectedMode);
+        BOOL checked =
+            expected->id == IDM_DESIGN_STYLE_OFFICE;
+        UINT expectedFlags = DESIGN_CONTROL_FLAG_CREATED |
+                             DESIGN_CONTROL_FLAG_ENABLED |
+                             DESIGN_CONTROL_FLAG_TABSTOP |
+                             DESIGN_CONTROL_FLAG_HAS_ICON |
+                             (visible
+                                  ? DESIGN_CONTROL_FLAG_VISIBLE
+                                  : 0) |
+                             (checked
+                                  ? DESIGN_CONTROL_FLAG_CHECKED
+                                  : 0) |
+                             (expected->stylePreview
+                                  ? DESIGN_CONTROL_FLAG_STYLE_PREVIEW
+                                  : 0);
+        const UINT knownFlags = DESIGN_CONTROL_FLAG_CREATED |
+                                DESIGN_CONTROL_FLAG_VISIBLE |
+                                DESIGN_CONTROL_FLAG_ENABLED |
+                                DESIGN_CONTROL_FLAG_TABSTOP |
+                                DESIGN_CONTROL_FLAG_HAS_ICON |
+                                DESIGN_CONTROL_FLAG_CHECKED |
+                                DESIGN_CONTROL_FLAG_STYLE_PREVIEW;
+
+        control = find_control(formatBar, (int)expected->id);
+        if (control == NULL ||
+            !query_wordcraft_state(window, WCQ_DESIGN_CONTROL_ID,
+                                   (LPARAM)index, &id) ||
+            !query_wordcraft_state(window, WCQ_DESIGN_CONTROL_GROUP,
+                                   (LPARAM)index, &group) ||
+            !query_wordcraft_state(window, WCQ_DESIGN_CONTROL_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            !query_wordcraft_state(window, WCQ_DESIGN_CONTROL_ICON,
+                                   (LPARAM)index, &icon) ||
+            id != expected->id || group != expected->group ||
+            icon != expected->icon ||
+            ((UINT)flags & knownFlags) != expectedFlags ||
+            !get_window_text_bounded(control, caption,
+                                     ARRAYSIZE(caption)) ||
+            wcscmp(caption, expected->caption) != 0 ||
+            !query_design_group_rect(window, expected->group,
+                                     &groupRect)) {
+            fwprintf(
+                stderr,
+                L"Design control %lu (%s) contract mismatch hwnd=%p id=%ld/%u group=%ld/%d flags=0x%lx/0x%x icon=%ld/%d caption='%s'\n",
+                (unsigned long)index, expected->caption, (void *)control,
+                (long)id, expected->id, (long)group, expected->group,
+                (unsigned long)flags, expectedFlags, (long)icon,
+                expected->icon, caption);
+            return FALSE;
+        }
+        if (!visible) {
+            if ((GetWindowLongPtrW(control, GWL_STYLE) & WS_VISIBLE) != 0) {
+                return FALSE;
+            }
+            continue;
+        }
+        if (!GetWindowRect(control, &controlRect)) {
+            return FALSE;
+        }
+        MapWindowPoints(HWND_DESKTOP, formatBar,
+                        (POINT *)&controlRect, 2);
+        if (controlRect.right <= controlRect.left ||
+            controlRect.bottom <= controlRect.top ||
+            controlRect.left < groupRect.left ||
+            controlRect.top < groupRect.top ||
+            controlRect.right > groupRect.right ||
+            controlRect.bottom > groupRect.bottom) {
+            fwprintf(
+                stderr,
+                L"Design control %lu (%s) geometry mismatch control=%ld,%ld,%ld,%ld group=%ld,%ld,%ld,%ld\n",
+                (unsigned long)index, expected->caption,
+                controlRect.left, controlRect.top,
+                controlRect.right, controlRect.bottom,
+                groupRect.left, groupRect.top,
+                groupRect.right, groupRect.bottom);
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL force_design_ribbon_offscreen_paint(HWND window,
+                                                 HWND formatBar)
+{
+    RECT client;
+    LRESULT groupBefore = 0;
+    LRESULT groupAfter = 0;
+    LRESULT iconBefore[ARRAYSIZE(expectedDesignControls)];
+    HDC referenceDc = NULL;
+    HDC memoryDc = NULL;
+    HBITMAP bitmap = NULL;
+    HGDIOBJ previousBitmap = NULL;
+    BOOL success = FALSE;
+    size_t index;
+
+    if (window == NULL || formatBar == NULL ||
+        !GetClientRect(formatBar, &client) ||
+        client.right <= client.left || client.bottom <= client.top ||
+        !query_wordcraft_state(window, WCQ_DESIGN_GROUP_PAINT_COUNT, 0,
+                               &groupBefore)) {
+        return FALSE;
+    }
+    for (index = 0; index < ARRAYSIZE(expectedDesignControls); ++index) {
+        if (!query_wordcraft_state(window, WCQ_DESIGN_ICON_PAINT_COUNT,
+                                   (LPARAM)index, &iconBefore[index])) {
+            return FALSE;
+        }
+    }
+
+    referenceDc = GetDC(formatBar);
+    if (referenceDc == NULL) {
+        goto cleanup;
+    }
+    memoryDc = CreateCompatibleDC(referenceDc);
+    bitmap = CreateCompatibleBitmap(
+        referenceDc, client.right - client.left,
+        client.bottom - client.top);
+    if (memoryDc == NULL || bitmap == NULL) {
+        goto cleanup;
+    }
+    previousBitmap = SelectObject(memoryDc, bitmap);
+    if (previousBitmap == NULL ||
+        previousBitmap == (HGDIOBJ)HGDI_ERROR ||
+        !send_message_bounded(formatBar, WM_PRINTCLIENT,
+                              (WPARAM)memoryDc,
+                              PRF_CLIENT | PRF_ERASEBKGND, NULL)) {
+        goto cleanup;
+    }
+    for (index = 0; index < ARRAYSIZE(expectedDesignControls); ++index) {
+        HWND control =
+            find_control(formatBar, (int)expectedDesignControls[index].id);
+        if (control == NULL ||
+            !send_message_bounded(control, WM_PRINTCLIENT,
+                                  (WPARAM)memoryDc,
+                                  PRF_CLIENT | PRF_ERASEBKGND, NULL)) {
+            goto cleanup;
+        }
+    }
+    GdiFlush();
+    if (!query_wordcraft_state(window, WCQ_DESIGN_GROUP_PAINT_COUNT, 0,
+                               &groupAfter) ||
+        groupAfter <= groupBefore) {
+        goto cleanup;
+    }
+    for (index = 0; index < ARRAYSIZE(expectedDesignControls); ++index) {
+        LRESULT iconAfter = 0;
+        if (!query_wordcraft_state(window, WCQ_DESIGN_ICON_PAINT_COUNT,
+                                   (LPARAM)index, &iconAfter) ||
+            iconAfter <= iconBefore[index]) {
+            fwprintf(stderr,
+                     L"Design offscreen icon paint stalled for %s (%ld -> %ld)\n",
+                     expectedDesignControls[index].caption,
+                     (long)iconBefore[index], (long)iconAfter);
+            goto cleanup;
+        }
+    }
+    success = TRUE;
+
+cleanup:
+    if (memoryDc != NULL && previousBitmap != NULL &&
+        previousBitmap != (HGDIOBJ)HGDI_ERROR) {
+        SelectObject(memoryDc, previousBitmap);
+    }
+    if (bitmap != NULL) {
+        DeleteObject(bitmap);
+    }
+    if (memoryDc != NULL) {
+        DeleteDC(memoryDc);
+    }
+    if (referenceDc != NULL) {
+        ReleaseDC(formatBar, referenceDc);
+    }
+    if (!success && groupAfter <= groupBefore) {
+        fwprintf(stderr,
+                 L"Design offscreen group paint stalled (%ld -> %ld)\n",
+                 (long)groupBefore, (long)groupAfter);
+    }
+    return success;
+}
+
+static BOOL design_controls_are_hidden(HWND window, HWND formatBar)
+{
+    size_t index;
+
+    if (window == NULL || formatBar == NULL) {
+        return FALSE;
+    }
+    for (index = 0; index < ARRAYSIZE(expectedDesignControls); ++index) {
+        HWND control =
+            find_control(formatBar, (int)expectedDesignControls[index].id);
+        LRESULT flags = 0;
+        if (control == NULL ||
+            !query_wordcraft_state(window, WCQ_DESIGN_CONTROL_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            ((UINT)flags & DESIGN_CONTROL_FLAG_VISIBLE) != 0 ||
+            (GetWindowLongPtrW(control, GWL_STYLE) & WS_VISIBLE) != 0) {
+            fwprintf(
+                stderr,
+                L"Design control %s remained visible (flags=0x%lx style=0x%lx)\n",
+                expectedDesignControls[index].caption,
+                (unsigned long)flags,
+                (unsigned long)GetWindowLongPtrW(control, GWL_STYLE));
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL wait_for_ribbon_control_focus(HWND window,
+                                          LRESULT expectedControlId);
+
+static BOOL wait_for_design_gallery_state(HWND window, BOOL expectedVisible,
+                                          LRESULT minimumPaintCount,
+                                          int expectedFocusedIndex)
+{
+    int attempt;
+
+    for (attempt = 0; attempt < 100; ++attempt) {
+        LRESULT visible = -1;
+        LRESULT paintCount = -1;
+        LRESULT itemCount = -1;
+        LRESULT focusedIndex = -1;
+        LRESULT groupFlags = 0;
+        BOOL openFlag;
+
+        if (!query_wordcraft_state(window, WCQ_DESIGN_GALLERY_VISIBLE, 0,
+                                   &visible) ||
+            !query_wordcraft_state(window,
+                                   WCQ_DESIGN_GALLERY_PAINT_COUNT, 0,
+                                   &paintCount) ||
+            !query_wordcraft_state(window,
+                                   WCQ_DESIGN_GALLERY_ITEM_COUNT, 0,
+                                   &itemCount) ||
+            !query_wordcraft_state(window,
+                                   WCQ_DESIGN_GALLERY_FOCUSED_INDEX, 0,
+                                   &focusedIndex) ||
+            !query_wordcraft_state(window, WCQ_DESIGN_GROUP_FLAGS,
+                                   DESIGN_GROUP_DOCUMENT_FORMATTING,
+                                   &groupFlags)) {
+            return FALSE;
+        }
+        openFlag =
+            ((UINT)groupFlags & DESIGN_GROUP_FLAG_GALLERY_OPEN) != 0;
+        if ((visible != 0) == expectedVisible &&
+            openFlag == expectedVisible &&
+            itemCount == DESIGN_STYLE_SET_COUNT + 2 &&
+            (!expectedVisible ||
+             (paintCount > minimumPaintCount &&
+              focusedIndex == expectedFocusedIndex))) {
+            return TRUE;
+        }
+        Sleep(20);
+    }
+    return FALSE;
+}
+
+static BOOL validate_design_gallery_contract(HWND window, HWND formatBar)
+{
+    HWND more;
+    HWND gallery;
+    LRESULT paintBefore = 0;
+    LRESULT focusedIndex = -1;
+    RECT previousFooter = {0};
+    int item;
+    int attempt;
+
+    if (window == NULL || formatBar == NULL ||
+        (more = find_control(formatBar,
+                             IDM_DESIGN_STYLE_GALLERY_MORE)) == NULL ||
+        !query_wordcraft_state(window, WCQ_DESIGN_GALLERY_PAINT_COUNT, 0,
+                               &paintBefore) ||
+        !send_message_bounded(
+            window, WM_COMMAND,
+            MAKEWPARAM(IDM_DESIGN_STYLE_GALLERY_MORE, BN_CLICKED),
+            (LPARAM)more, NULL) ||
+        !wait_for_design_gallery_state(window, TRUE, paintBefore, 0)) {
+        return FALSE;
+    }
+
+    gallery = NULL;
+    for (attempt = 0; attempt < 100 && gallery == NULL; ++attempt) {
+        gallery = find_open_design_gallery(window);
+        if (gallery == NULL) {
+            Sleep(20);
+        }
+    }
+    if (gallery == NULL) {
+        return FALSE;
+    }
+    for (item = 0; item < DESIGN_STYLE_SET_COUNT + 2; ++item) {
+        RECT rect;
+        if (!query_design_gallery_item_rect(window, item, &rect) ||
+            rect.left < 0 || rect.top < 0 ||
+            rect.right <= rect.left || rect.bottom <= rect.top) {
+            fwprintf(stderr,
+                     L"Design gallery item %d had an invalid rect\n",
+                     item);
+            return FALSE;
+        }
+        if (item == DESIGN_STYLE_SET_COUNT) {
+            previousFooter = rect;
+        } else if (item == DESIGN_STYLE_SET_COUNT + 1 &&
+                   rect.top < previousFooter.bottom) {
+            fwprintf(stderr,
+                     L"Design gallery footer items overlapped\n");
+            return FALSE;
+        }
+    }
+
+    if (!send_message_bounded(gallery, WM_KEYDOWN, VK_RIGHT, 0, NULL)) {
+        return FALSE;
+    }
+    for (attempt = 0; attempt < 100; ++attempt) {
+        if (!query_wordcraft_state(
+                window, WCQ_DESIGN_GALLERY_FOCUSED_INDEX, 0,
+                &focusedIndex)) {
+            return FALSE;
+        }
+        if (focusedIndex == 1) {
+            break;
+        }
+        Sleep(20);
+    }
+    if (focusedIndex != 1 ||
+        !send_message_bounded(gallery, WM_KEYDOWN, VK_ESCAPE, 0, NULL) ||
+        !wait_for_design_gallery_state(window, FALSE, 0, -1) ||
+        !wait_for_ribbon_control_focus(
+            window, IDM_DESIGN_STYLE_GALLERY_MORE)) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL validate_view_layout_contract(HWND window, HWND formatBar,
+                                          int expectedMode)
+{
+    RECT client;
+    RECT previous = {0};
+    LRESULT groupCount = 0;
+    LRESULT controlCount = 0;
+    LRESULT groupPaintCount = 0;
+    LRESULT mode = 0;
+    LRESULT activeMode = 0;
+    LRESULT vertical = 0;
+    LRESULT rulerVisible = 0;
+    LRESULT gridlinesVisible = 0;
+    LRESULT navigationVisible = 0;
+    LRESULT sideBySide = 0;
+    LRESULT focusMode = 0;
+    LRESULT darkMode = 0;
+    size_t index;
+
+    if (window == NULL || formatBar == NULL ||
+        expectedMode < RIBBON_LAYOUT_FULL ||
+        expectedMode > RIBBON_LAYOUT_COLLAPSED ||
+        !GetClientRect(formatBar, &client) ||
+        !query_wordcraft_state(window, WCQ_VIEW_GROUP_COUNT, 0,
+                               &groupCount) ||
+        !query_wordcraft_state(window, WCQ_VIEW_CONTROL_COUNT, 0,
+                               &controlCount) ||
+        !query_wordcraft_state(window, WCQ_VIEW_GROUP_PAINT_COUNT, 0,
+                               &groupPaintCount) ||
+        !query_wordcraft_state(window, WCQ_VIEW_LAYOUT_MODE, 0, &mode) ||
+        !query_wordcraft_state(window, WCQ_VIEW_ACTIVE_MODE, 0,
+                               &activeMode) ||
+        !query_wordcraft_state(window, WCQ_VIEW_MOVEMENT_VERTICAL, 0,
+                               &vertical) ||
+        !query_wordcraft_state(window, WCQ_VIEW_RULER_VISIBLE, 0,
+                               &rulerVisible) ||
+        !query_wordcraft_state(window, WCQ_VIEW_GRIDLINES_VISIBLE, 0,
+                               &gridlinesVisible) ||
+        !query_wordcraft_state(window, WCQ_VIEW_NAVIGATION_VISIBLE, 0,
+                               &navigationVisible) ||
+        !query_wordcraft_state(window, WCQ_VIEW_SIDE_BY_SIDE, 0,
+                               &sideBySide) ||
+        !query_wordcraft_state(window, WCQ_VIEW_FOCUS_MODE, 0,
+                               &focusMode) ||
+        !query_wordcraft_state(window, WCQ_DARK_MODE, 0, &darkMode) ||
+        groupCount != VIEW_GROUP_COUNT ||
+        controlCount != (LRESULT)ARRAYSIZE(expectedViewControls) ||
+        mode != expectedMode || client.right <= client.left ||
+        client.bottom <= client.top || groupPaintCount < 0 ||
+        activeMode != VIEW_MODE_PRINT_LAYOUT || vertical != 1 ||
+        rulerVisible != 0 || gridlinesVisible != 0 ||
+        navigationVisible != 0 || sideBySide != 0 || focusMode != 0 ||
+        darkMode != 0) {
+        fwprintf(
+            stderr,
+            L"View layout precondition mismatch mode=%ld/%d groups=%ld/%d controls=%ld/%lu active=%ld/%d vertical=%ld ruler=%ld grid=%ld navigation=%ld side=%ld focus=%ld dark=%ld client=%ldx%ld paint=%ld\n",
+            (long)mode, expectedMode, (long)groupCount, VIEW_GROUP_COUNT,
+            (long)controlCount,
+            (unsigned long)ARRAYSIZE(expectedViewControls),
+            (long)activeMode, VIEW_MODE_PRINT_LAYOUT, (long)vertical,
+            (long)rulerVisible, (long)gridlinesVisible,
+            (long)navigationVisible, (long)sideBySide, (long)focusMode,
+            (long)darkMode, client.right - client.left,
+            client.bottom - client.top, (long)groupPaintCount);
+        return FALSE;
+    }
+
+    for (index = 0; index < VIEW_GROUP_COUNT; ++index) {
+        RECT rect;
+        LRESULT hash = 0;
+        LRESULT flags = 0;
+        UINT expectedFlags = VIEW_GROUP_FLAG_VISIBLE;
+        const UINT knownFlags = VIEW_GROUP_FLAG_VISIBLE |
+                                VIEW_GROUP_FLAG_LABEL_VISIBLE |
+                                VIEW_GROUP_FLAG_COLLAPSED;
+
+        if (expectedMode == RIBBON_LAYOUT_COLLAPSED) {
+            expectedFlags |= VIEW_GROUP_FLAG_COLLAPSED;
+        } else {
+            expectedFlags |= VIEW_GROUP_FLAG_LABEL_VISIBLE;
+        }
+        if (!query_wordcraft_state(window, WCQ_VIEW_GROUP_NAME_HASH,
+                                   (LPARAM)index, &hash) ||
+            !query_wordcraft_state(window, WCQ_VIEW_GROUP_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            !query_view_group_rect(window, (int)index, &rect) ||
+            (UINT)(DWORD_PTR)hash !=
+                probe_text_hash(expectedViewGroupNames[index]) ||
+            ((UINT)flags & knownFlags) != expectedFlags ||
+            rect.left < client.left || rect.top < client.top ||
+            rect.right > client.right || rect.bottom > client.bottom ||
+            rect.right <= rect.left || rect.bottom <= rect.top ||
+            (index > 0 && rect.left < previous.right)) {
+            fwprintf(
+                stderr,
+                L"View group %lu contract mismatch hash=0x%lx expected=0x%lx flags=0x%lx expected_flags=0x%x rect=%ld,%ld,%ld,%ld client=%ld,%ld,%ld,%ld previous_right=%ld\n",
+                (unsigned long)index, (unsigned long)hash,
+                (unsigned long)probe_text_hash(
+                    expectedViewGroupNames[index]),
+                (unsigned long)flags, expectedFlags,
+                rect.left, rect.top, rect.right, rect.bottom,
+                client.left, client.top, client.right, client.bottom,
+                previous.right);
+            return FALSE;
+        }
+        previous = rect;
+    }
+
+    for (index = 0; index < ARRAYSIZE(expectedViewControls); ++index) {
+        const ExpectedViewControl *expected = &expectedViewControls[index];
+        RECT controlRect;
+        RECT groupRect;
+        HWND control;
+        WCHAR caption[64] = L"";
+        LRESULT id = 0;
+        LRESULT group = -1;
+        LRESULT flags = 0;
+        LRESULT icon = 0;
+        BOOL checked = expected->id == IDM_VIEW_PRINT_LAYOUT ||
+                       expected->id == IDM_VIEW_VERTICAL;
+        UINT expectedFlags = VIEW_CONTROL_FLAG_CREATED |
+                             VIEW_CONTROL_FLAG_VISIBLE |
+                             VIEW_CONTROL_FLAG_TABSTOP |
+                             VIEW_CONTROL_FLAG_HAS_ICON |
+                             (expected->enabledByDefault
+                                  ? VIEW_CONTROL_FLAG_ENABLED
+                                  : 0) |
+                             (checked ? VIEW_CONTROL_FLAG_CHECKED : 0);
+        const UINT knownFlags = VIEW_CONTROL_FLAG_CREATED |
+                                VIEW_CONTROL_FLAG_VISIBLE |
+                                VIEW_CONTROL_FLAG_ENABLED |
+                                VIEW_CONTROL_FLAG_TABSTOP |
+                                VIEW_CONTROL_FLAG_HAS_ICON |
+                                VIEW_CONTROL_FLAG_CHECKED;
+
+        control = find_control(formatBar, (int)expected->id);
+        if (control == NULL ||
+            !query_wordcraft_state(window, WCQ_VIEW_CONTROL_ID,
+                                   (LPARAM)index, &id) ||
+            !query_wordcraft_state(window, WCQ_VIEW_CONTROL_GROUP,
+                                   (LPARAM)index, &group) ||
+            !query_wordcraft_state(window, WCQ_VIEW_CONTROL_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            !query_wordcraft_state(window, WCQ_VIEW_CONTROL_ICON,
+                                   (LPARAM)index, &icon) ||
+            id != expected->id || group != expected->group ||
+            icon != expected->icon ||
+            ((UINT)flags & knownFlags) != expectedFlags ||
+            !get_window_text_bounded(control, caption,
+                                     ARRAYSIZE(caption)) ||
+            wcscmp(caption, expected->caption) != 0 ||
+            !GetWindowRect(control, &controlRect) ||
+            !query_view_group_rect(window, expected->group, &groupRect)) {
+            fwprintf(
+                stderr,
+                L"View control %lu (%s) contract mismatch hwnd=%p id=%ld/%u group=%ld/%d flags=0x%lx/0x%x icon=%ld/%d caption='%s'\n",
+                (unsigned long)index, expected->caption, (void *)control,
+                (long)id, expected->id, (long)group, expected->group,
+                (unsigned long)flags, expectedFlags, (long)icon,
+                expected->icon, caption);
+            return FALSE;
+        }
+        MapWindowPoints(HWND_DESKTOP, formatBar,
+                        (POINT *)&controlRect, 2);
+        if (controlRect.right <= controlRect.left ||
+            controlRect.bottom <= controlRect.top ||
+            controlRect.left < groupRect.left ||
+            controlRect.top < groupRect.top ||
+            controlRect.right > groupRect.right ||
+            controlRect.bottom > groupRect.bottom) {
+            fwprintf(
+                stderr,
+                L"View control %lu (%s) geometry mismatch control=%ld,%ld,%ld,%ld group=%ld,%ld,%ld,%ld\n",
+                (unsigned long)index, expected->caption,
+                controlRect.left, controlRect.top,
+                controlRect.right, controlRect.bottom,
+                groupRect.left, groupRect.top,
+                groupRect.right, groupRect.bottom);
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL force_view_ribbon_offscreen_paint(HWND window,
+                                               HWND formatBar)
+{
+    RECT client;
+    LRESULT groupBefore = 0;
+    LRESULT groupAfter = 0;
+    LRESULT iconBefore[ARRAYSIZE(expectedViewControls)];
+    HDC referenceDc = NULL;
+    HDC memoryDc = NULL;
+    HBITMAP bitmap = NULL;
+    HGDIOBJ previousBitmap = NULL;
+    BOOL success = FALSE;
+    size_t index;
+
+    if (window == NULL || formatBar == NULL ||
+        !GetClientRect(formatBar, &client) ||
+        client.right <= client.left || client.bottom <= client.top ||
+        !query_wordcraft_state(window, WCQ_VIEW_GROUP_PAINT_COUNT, 0,
+                               &groupBefore)) {
+        return FALSE;
+    }
+    for (index = 0; index < ARRAYSIZE(expectedViewControls); ++index) {
+        if (!query_wordcraft_state(window, WCQ_VIEW_ICON_PAINT_COUNT,
+                                   (LPARAM)index, &iconBefore[index])) {
+            return FALSE;
+        }
+    }
+
+    referenceDc = GetDC(formatBar);
+    if (referenceDc == NULL) {
+        goto cleanup;
+    }
+    memoryDc = CreateCompatibleDC(referenceDc);
+    bitmap = CreateCompatibleBitmap(
+        referenceDc, client.right - client.left,
+        client.bottom - client.top);
+    if (memoryDc == NULL || bitmap == NULL) {
+        goto cleanup;
+    }
+    previousBitmap = SelectObject(memoryDc, bitmap);
+    if (previousBitmap == NULL ||
+        previousBitmap == (HGDIOBJ)HGDI_ERROR ||
+        !send_message_bounded(formatBar, WM_PRINTCLIENT,
+                              (WPARAM)memoryDc,
+                              PRF_CLIENT | PRF_ERASEBKGND, NULL)) {
+        goto cleanup;
+    }
+    for (index = 0; index < ARRAYSIZE(expectedViewControls); ++index) {
+        HWND control =
+            find_control(formatBar, (int)expectedViewControls[index].id);
+        if (control == NULL ||
+            !send_message_bounded(control, WM_PRINTCLIENT,
+                                  (WPARAM)memoryDc,
+                                  PRF_CLIENT | PRF_ERASEBKGND, NULL)) {
+            goto cleanup;
+        }
+    }
+    GdiFlush();
+    if (!query_wordcraft_state(window, WCQ_VIEW_GROUP_PAINT_COUNT, 0,
+                               &groupAfter) ||
+        groupAfter <= groupBefore) {
+        goto cleanup;
+    }
+    for (index = 0; index < ARRAYSIZE(expectedViewControls); ++index) {
+        LRESULT iconAfter = 0;
+        if (!query_wordcraft_state(window, WCQ_VIEW_ICON_PAINT_COUNT,
+                                   (LPARAM)index, &iconAfter) ||
+            iconAfter <= iconBefore[index]) {
+            fwprintf(stderr,
+                     L"View offscreen icon paint stalled for %s (%ld -> %ld)\n",
+                     expectedViewControls[index].caption,
+                     (long)iconBefore[index], (long)iconAfter);
+            goto cleanup;
+        }
+    }
+    success = TRUE;
+
+cleanup:
+    if (memoryDc != NULL && previousBitmap != NULL &&
+        previousBitmap != (HGDIOBJ)HGDI_ERROR) {
+        SelectObject(memoryDc, previousBitmap);
+    }
+    if (bitmap != NULL) {
+        DeleteObject(bitmap);
+    }
+    if (memoryDc != NULL) {
+        DeleteDC(memoryDc);
+    }
+    if (referenceDc != NULL) {
+        ReleaseDC(formatBar, referenceDc);
+    }
+    if (!success && groupAfter <= groupBefore) {
+        fwprintf(stderr,
+                 L"View offscreen group paint stalled (%ld -> %ld)\n",
+                 (long)groupBefore, (long)groupAfter);
+    }
+    return success;
+}
+
+static BOOL view_controls_are_hidden(HWND window, HWND formatBar)
+{
+    size_t index;
+
+    if (window == NULL || formatBar == NULL) {
+        return FALSE;
+    }
+    for (index = 0; index < VIEW_GROUP_COUNT; ++index) {
+        LRESULT flags = 0;
+        if (!query_wordcraft_state(window, WCQ_VIEW_GROUP_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            ((UINT)flags & (VIEW_GROUP_FLAG_VISIBLE |
+                            VIEW_GROUP_FLAG_LABEL_VISIBLE)) != 0) {
+            fwprintf(stderr,
+                     L"View group %lu remained visible (flags=0x%lx)\n",
+                     (unsigned long)index, (unsigned long)flags);
+            return FALSE;
+        }
+    }
+    for (index = 0; index < ARRAYSIZE(expectedViewControls); ++index) {
+        HWND control =
+            find_control(formatBar, (int)expectedViewControls[index].id);
+        LRESULT flags = 0;
+        if (control == NULL ||
+            !query_wordcraft_state(window, WCQ_VIEW_CONTROL_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            ((UINT)flags & VIEW_CONTROL_FLAG_VISIBLE) != 0 ||
+            (GetWindowLongPtrW(control, GWL_STYLE) & WS_VISIBLE) != 0) {
+            fwprintf(stderr,
+                     L"View control %s remained visible (flags=0x%lx style=0x%lx)\n",
+                     expectedViewControls[index].caption,
+                     (unsigned long)flags,
+                     (unsigned long)GetWindowLongPtrW(control, GWL_STYLE));
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL get_selection_bounded(HWND editor, DWORD *start, DWORD *end);
+
+typedef struct DrawDocumentSnapshot {
+    WCHAR text[512];
+    LRESULT textLength;
+    LRESULT modified;
+    LRESULT canUndo;
+    LRESULT canRedo;
+    LRESULT pageCount;
+    DWORD selectionStart;
+    DWORD selectionEnd;
+} DrawDocumentSnapshot;
+
+static BOOL capture_draw_document_snapshot(
+    HWND window, HWND editor, DrawDocumentSnapshot *snapshot)
+{
+    if (window == NULL || editor == NULL || snapshot == NULL) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    ZeroMemory(snapshot, sizeof(*snapshot));
+    return send_message_bounded(editor, WM_GETTEXTLENGTH, 0, 0,
+                                &snapshot->textLength) &&
+           snapshot->textLength >= 0 &&
+           snapshot->textLength <
+               (LRESULT)ARRAYSIZE(snapshot->text) &&
+           get_window_text_bounded(editor, snapshot->text,
+                                   ARRAYSIZE(snapshot->text)) &&
+           (LRESULT)wcslen(snapshot->text) == snapshot->textLength &&
+           send_message_bounded(editor, EM_GETMODIFY, 0, 0,
+                                &snapshot->modified) &&
+           send_message_bounded(editor, EM_CANUNDO, 0, 0,
+                                &snapshot->canUndo) &&
+           send_message_bounded(editor, EM_CANREDO, 0, 0,
+                                &snapshot->canRedo) &&
+           query_wordcraft_state(window, WCQ_PAGE_COUNT, 0,
+                                 &snapshot->pageCount) &&
+           get_selection_bounded(editor, &snapshot->selectionStart,
+                                 &snapshot->selectionEnd);
+}
+
+static BOOL draw_document_matches_snapshot(
+    HWND window, HWND editor, const DrawDocumentSnapshot *expected)
+{
+    DrawDocumentSnapshot actual;
+
+    return expected != NULL &&
+           capture_draw_document_snapshot(window, editor, &actual) &&
+           actual.textLength == expected->textLength &&
+           wcscmp(actual.text, expected->text) == 0 &&
+           actual.modified == expected->modified &&
+           actual.canUndo == expected->canUndo &&
+           actual.canRedo == expected->canRedo &&
+           actual.pageCount == expected->pageCount &&
+           actual.selectionStart == expected->selectionStart &&
+           actual.selectionEnd == expected->selectionEnd;
+}
+
+static BOOL draw_state_matches(HWND window, UINT expectedTool,
+                               BOOL expectedRuler,
+                               BOOL expectedBackground)
+{
+    LRESULT activeTool = 0;
+    LRESULT rulerVisible = 0;
+    LRESULT backgroundRuled = 0;
+    size_t index;
+
+    if (!draw_control_is_tool(expectedTool) ||
+        !query_wordcraft_state(window, WCQ_DRAW_ACTIVE_TOOL, 0,
+                               &activeTool) ||
+        !query_wordcraft_state(window, WCQ_DRAW_RULER_VISIBLE, 0,
+                               &rulerVisible) ||
+        !query_wordcraft_state(window, WCQ_DRAW_BACKGROUND_RULED, 0,
+                               &backgroundRuled) ||
+        activeTool != expectedTool ||
+        (rulerVisible != 0) != expectedRuler ||
+        (backgroundRuled != 0) != expectedBackground) {
+        return FALSE;
+    }
+    for (index = 0; index < ARRAYSIZE(expectedDrawControls); ++index) {
+        UINT id = expectedDrawControls[index].id;
+        BOOL expectedChecked =
+            id == expectedTool ||
+            (id == IDM_DRAW_RULER && expectedRuler) ||
+            (id == IDM_DRAW_FORMAT_BACKGROUND &&
+             expectedBackground);
+        LRESULT flags = 0;
+
+        if (!query_wordcraft_state(window, WCQ_DRAW_CONTROL_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            ((((UINT)flags & DRAW_CONTROL_FLAG_CHECKED) != 0) !=
+             expectedChecked)) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL validate_draw_nonmutating_commands(HWND window, HWND editor)
+{
+    static const struct {
+        UINT command;
+        UINT expectedTool;
+        BOOL expectedRuler;
+        BOOL expectedBackground;
+    } steps[] = {
+        {IDM_DRAW_PEN_RED, IDM_DRAW_PEN_RED, FALSE, FALSE},
+        {IDM_DRAW_RULER, IDM_DRAW_PEN_RED, TRUE, FALSE},
+        {IDM_DRAW_FORMAT_BACKGROUND, IDM_DRAW_PEN_RED, TRUE, TRUE},
+        {IDM_DRAW_RULER, IDM_DRAW_PEN_RED, FALSE, TRUE},
+        {IDM_DRAW_FORMAT_BACKGROUND, IDM_DRAW_PEN_RED, FALSE, FALSE},
+        {IDM_DRAW_SELECT, IDM_DRAW_SELECT, FALSE, FALSE}
+    };
+    DrawDocumentSnapshot document;
+    size_t index;
+
+    if (!draw_state_matches(window, IDM_DRAW_SELECT, FALSE, FALSE) ||
+        !capture_draw_document_snapshot(window, editor, &document)) {
+        return FALSE;
+    }
+    for (index = 0; index < ARRAYSIZE(steps); ++index) {
+        if (!send_message_bounded(
+                window, WM_COMMAND,
+                MAKEWPARAM(steps[index].command, 0), 0, NULL) ||
+            !draw_state_matches(window, steps[index].expectedTool,
+                                steps[index].expectedRuler,
+                                steps[index].expectedBackground) ||
+            !draw_document_matches_snapshot(window, editor,
+                                            &document)) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+typedef struct DesignStateSnapshot {
+    LRESULT activeStyleSet;
+    LRESULT colorScheme;
+    LRESULT fontScheme;
+    LRESULT paragraphSpacing;
+    LRESULT effect;
+    LRESULT galleryVisible;
+} DesignStateSnapshot;
+
+static BOOL capture_design_state(HWND window, DesignStateSnapshot *state)
+{
+    if (window == NULL || state == NULL) {
+        return FALSE;
+    }
+    return query_wordcraft_state(window, WCQ_DESIGN_ACTIVE_STYLE_SET, 0,
+                                 &state->activeStyleSet) &&
+           query_wordcraft_state(window, WCQ_DESIGN_COLOR_SCHEME, 0,
+                                 &state->colorScheme) &&
+           query_wordcraft_state(window, WCQ_DESIGN_FONT_SCHEME, 0,
+                                 &state->fontScheme) &&
+           query_wordcraft_state(window, WCQ_DESIGN_PARAGRAPH_SPACING, 0,
+                                 &state->paragraphSpacing) &&
+           query_wordcraft_state(window, WCQ_DESIGN_EFFECT, 0,
+                                 &state->effect) &&
+           query_wordcraft_state(window, WCQ_DESIGN_GALLERY_VISIBLE, 0,
+                                 &state->galleryVisible);
+}
+
+static BOOL design_state_matches(HWND window,
+                                 const DesignStateSnapshot *expected)
+{
+    DesignStateSnapshot actual;
+
+    return expected != NULL &&
+           capture_design_state(window, &actual) &&
+           actual.activeStyleSet == expected->activeStyleSet &&
+           actual.colorScheme == expected->colorScheme &&
+           actual.fontScheme == expected->fontScheme &&
+           actual.paragraphSpacing == expected->paragraphSpacing &&
+           actual.effect == expected->effect &&
+           actual.galleryVisible == expected->galleryVisible;
+}
+
+static BOOL design_checkmark_matches(HWND window, UINT command,
+                                     BOOL expectedChecked)
+{
+    size_t index;
+
+    for (index = 0; index < ARRAYSIZE(expectedDesignControls); ++index) {
+        LRESULT flags = 0;
+        if (expectedDesignControls[index].id != command) {
+            continue;
+        }
+        return query_wordcraft_state(window, WCQ_DESIGN_CONTROL_FLAGS,
+                                     (LPARAM)index, &flags) &&
+               ((((UINT)flags & DESIGN_CONTROL_FLAG_CHECKED) != 0) ==
+                expectedChecked);
+    }
+    return FALSE;
+}
+
+static BOOL validate_design_active_selection(HWND window, HWND formatBar)
+{
+    HWND elegant;
+    HWND office;
+    LRESULT activeStyleSet = -1;
+
+    if (window == NULL || formatBar == NULL ||
+        (elegant = find_control(
+             formatBar, IDM_DESIGN_STYLE_BASIC_ELEGANT)) == NULL ||
+        (office = find_control(formatBar,
+                               IDM_DESIGN_STYLE_OFFICE)) == NULL ||
+        !send_message_bounded(
+            window, WM_COMMAND,
+            MAKEWPARAM(IDM_DESIGN_STYLE_BASIC_ELEGANT, BN_CLICKED),
+            (LPARAM)elegant, NULL) ||
+        !query_wordcraft_state(window, WCQ_DESIGN_ACTIVE_STYLE_SET, 0,
+                               &activeStyleSet) ||
+        activeStyleSet != DESIGN_STYLE_SET_BASIC_ELEGANT ||
+        !design_checkmark_matches(
+            window, IDM_DESIGN_STYLE_BASIC_ELEGANT, TRUE) ||
+        !design_checkmark_matches(window, IDM_DESIGN_STYLE_OFFICE,
+                                  FALSE) ||
+        !send_message_bounded(
+            window, WM_COMMAND,
+            MAKEWPARAM(IDM_DESIGN_STYLE_OFFICE, BN_CLICKED),
+            (LPARAM)office, NULL) ||
+        !query_wordcraft_state(window, WCQ_DESIGN_ACTIVE_STYLE_SET, 0,
+                               &activeStyleSet) ||
+        activeStyleSet != DESIGN_STYLE_SET_OFFICE ||
+        !design_checkmark_matches(window, IDM_DESIGN_STYLE_OFFICE,
+                                  TRUE) ||
+        !design_checkmark_matches(
+            window, IDM_DESIGN_STYLE_BASIC_ELEGANT, FALSE)) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL validate_design_unsupported_nonmutating(
+    HWND window, HWND editor, HWND formatBar)
+{
+    static const UINT commands[] = {
+        IDM_DESIGN_SET_AS_DEFAULT,
+        IDM_DESIGN_WATERMARK,
+        IDM_DESIGN_PAGE_COLOR,
+        IDM_DESIGN_PAGE_BORDERS
+    };
+    DrawDocumentSnapshot document;
+    DesignStateSnapshot design;
+    size_t index;
+
+    if (window == NULL || editor == NULL || formatBar == NULL ||
+        !capture_draw_document_snapshot(window, editor, &document) ||
+        !capture_design_state(window, &design)) {
+        return FALSE;
+    }
+    for (index = 0; index < ARRAYSIZE(commands); ++index) {
+        HWND control = find_control(formatBar, (int)commands[index]);
+        if (control == NULL ||
+            !send_message_bounded(
+                window, WM_COMMAND,
+                MAKEWPARAM(commands[index], BN_CLICKED),
+                (LPARAM)control, NULL) ||
+            !draw_document_matches_snapshot(window, editor, &document) ||
+            !design_state_matches(window, &design)) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL view_mode_is_valid(int mode)
+{
+    return mode >= VIEW_MODE_READ && mode <= VIEW_MODE_DRAFT;
+}
+
+static UINT view_command_for_mode(int mode)
+{
+    switch (mode) {
+    case VIEW_MODE_READ:
+        return IDM_VIEW_READ_MODE;
+    case VIEW_MODE_PRINT_LAYOUT:
+        return IDM_VIEW_PRINT_LAYOUT;
+    case VIEW_MODE_WEB_LAYOUT:
+        return IDM_VIEW_WEB_LAYOUT;
+    case VIEW_MODE_OUTLINE:
+        return IDM_VIEW_OUTLINE;
+    case VIEW_MODE_DRAFT:
+        return IDM_VIEW_DRAFT;
+    default:
+        return 0;
+    }
+}
+
+static BOOL view_state_matches(HWND window, int expectedMode,
+                               BOOL expectedVertical,
+                               BOOL expectedRuler,
+                               BOOL expectedGridlines,
+                               BOOL expectedNavigation,
+                               BOOL expectedSideBySide,
+                               BOOL expectedFocus)
+{
+    LRESULT activeMode = 0;
+    LRESULT vertical = 0;
+    LRESULT rulerVisible = 0;
+    LRESULT gridlinesVisible = 0;
+    LRESULT navigationVisible = 0;
+    LRESULT sideBySide = 0;
+    LRESULT focusMode = 0;
+    LRESULT darkMode = 0;
+    size_t index;
+
+    if (!view_mode_is_valid(expectedMode) ||
+        !query_wordcraft_state(window, WCQ_VIEW_ACTIVE_MODE, 0,
+                               &activeMode) ||
+        !query_wordcraft_state(window, WCQ_VIEW_MOVEMENT_VERTICAL, 0,
+                               &vertical) ||
+        !query_wordcraft_state(window, WCQ_VIEW_RULER_VISIBLE, 0,
+                               &rulerVisible) ||
+        !query_wordcraft_state(window, WCQ_VIEW_GRIDLINES_VISIBLE, 0,
+                               &gridlinesVisible) ||
+        !query_wordcraft_state(window, WCQ_VIEW_NAVIGATION_VISIBLE, 0,
+                               &navigationVisible) ||
+        !query_wordcraft_state(window, WCQ_VIEW_SIDE_BY_SIDE, 0,
+                               &sideBySide) ||
+        !query_wordcraft_state(window, WCQ_VIEW_FOCUS_MODE, 0,
+                               &focusMode) ||
+        !query_wordcraft_state(window, WCQ_DARK_MODE, 0, &darkMode) ||
+        activeMode != expectedMode ||
+        (vertical != 0) != expectedVertical ||
+        (rulerVisible != 0) != expectedRuler ||
+        (gridlinesVisible != 0) != expectedGridlines ||
+        (navigationVisible != 0) != expectedNavigation ||
+        (sideBySide != 0) != expectedSideBySide ||
+        (focusMode != 0) != expectedFocus || darkMode != 0) {
+        return FALSE;
+    }
+
+    for (index = 0; index < ARRAYSIZE(expectedViewControls); ++index) {
+        UINT id = expectedViewControls[index].id;
+        BOOL expectedChecked =
+            id == view_command_for_mode(expectedMode) ||
+            (id == IDM_VIEW_VERTICAL && expectedVertical) ||
+            (id == IDM_VIEW_SIDE_TO_SIDE && !expectedVertical) ||
+            (id == IDM_VIEW_RULER && expectedRuler) ||
+            (id == IDM_VIEW_GRIDLINES && expectedGridlines) ||
+            (id == IDM_VIEW_NAVIGATION_PANE && expectedNavigation) ||
+            (id == IDM_VIEW_SIDE_BY_SIDE && expectedSideBySide) ||
+            (id == IDM_VIEW_FOCUS && expectedFocus);
+        LRESULT flags = 0;
+
+        if (!query_wordcraft_state(window, WCQ_VIEW_CONTROL_FLAGS,
+                                   (LPARAM)index, &flags) ||
+            ((((UINT)flags & VIEW_CONTROL_FLAG_CHECKED) != 0) !=
+             expectedChecked)) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOL validate_view_nonmutating_commands(HWND window, HWND editor)
+{
+    static const struct {
+        UINT command;
+        int expectedMode;
+        BOOL vertical;
+        BOOL ruler;
+        BOOL gridlines;
+        BOOL navigation;
+        BOOL sideBySide;
+        BOOL focus;
+    } steps[] = {
+        {IDM_VIEW_READ_MODE, VIEW_MODE_READ,
+         TRUE, FALSE, FALSE, FALSE, FALSE, FALSE},
+        {IDM_VIEW_PRINT_LAYOUT, VIEW_MODE_PRINT_LAYOUT,
+         TRUE, FALSE, FALSE, FALSE, FALSE, FALSE},
+        {IDM_VIEW_WEB_LAYOUT, VIEW_MODE_PRINT_LAYOUT,
+         TRUE, FALSE, FALSE, FALSE, FALSE, FALSE},
+        {IDM_VIEW_OUTLINE, VIEW_MODE_PRINT_LAYOUT,
+         TRUE, FALSE, FALSE, FALSE, FALSE, FALSE},
+        {IDM_VIEW_DRAFT, VIEW_MODE_PRINT_LAYOUT,
+         TRUE, FALSE, FALSE, FALSE, FALSE, FALSE},
+        {IDM_VIEW_SIDE_TO_SIDE, VIEW_MODE_PRINT_LAYOUT,
+         TRUE, FALSE, FALSE, FALSE, FALSE, FALSE},
+        {IDM_VIEW_VERTICAL, VIEW_MODE_PRINT_LAYOUT,
+         TRUE, FALSE, FALSE, FALSE, FALSE, FALSE},
+        {IDM_VIEW_RULER, VIEW_MODE_PRINT_LAYOUT,
+         TRUE, TRUE, FALSE, FALSE, FALSE, FALSE},
+        {IDM_VIEW_GRIDLINES, VIEW_MODE_PRINT_LAYOUT,
+         TRUE, TRUE, TRUE, FALSE, FALSE, FALSE},
+        {IDM_VIEW_RULER, VIEW_MODE_PRINT_LAYOUT,
+         TRUE, FALSE, TRUE, FALSE, FALSE, FALSE},
+        {IDM_VIEW_GRIDLINES, VIEW_MODE_PRINT_LAYOUT,
+         TRUE, FALSE, FALSE, FALSE, FALSE, FALSE},
+        {IDM_VIEW_FOCUS, VIEW_MODE_PRINT_LAYOUT,
+         TRUE, FALSE, FALSE, FALSE, FALSE, TRUE}
+    };
+    static const UINT actionCommands[] = {
+        IDM_VIEW_ONE_PAGE, IDM_VIEW_MULTIPLE_PAGES,
+        IDM_VIEW_PAGE_WIDTH, IDM_VIEW_ZOOM_100
+    };
+    DrawDocumentSnapshot document;
+    size_t index;
+
+    if (!view_state_matches(window, VIEW_MODE_PRINT_LAYOUT, TRUE,
+                            FALSE, FALSE, FALSE, FALSE, FALSE) ||
+        !capture_draw_document_snapshot(window, editor, &document)) {
+        return FALSE;
+    }
+    for (index = 0; index < ARRAYSIZE(steps); ++index) {
+        if (!send_message_bounded(
+                window, WM_COMMAND,
+                MAKEWPARAM(steps[index].command, 0), 0, NULL) ||
+            !view_state_matches(
+                window, steps[index].expectedMode, steps[index].vertical,
+                steps[index].ruler, steps[index].gridlines,
+                steps[index].navigation, steps[index].sideBySide,
+                steps[index].focus) ||
+            !draw_document_matches_snapshot(window, editor, &document)) {
+            return FALSE;
+        }
+    }
+    if (!send_message_bounded(editor, WM_KEYDOWN, VK_ESCAPE, 0, NULL) ||
+        !view_state_matches(window, VIEW_MODE_PRINT_LAYOUT, TRUE,
+                            FALSE, FALSE, FALSE, FALSE, FALSE) ||
+        !draw_document_matches_snapshot(window, editor, &document)) {
+        return FALSE;
+    }
+    for (index = 0; index < ARRAYSIZE(actionCommands); ++index) {
+        if (!send_message_bounded(
+                window, WM_COMMAND,
+                MAKEWPARAM(actionCommands[index], 0), 0, NULL) ||
+            !view_state_matches(window, VIEW_MODE_PRINT_LAYOUT, TRUE,
+                                FALSE, FALSE, FALSE, FALSE, FALSE) ||
+            !draw_document_matches_snapshot(window, editor, &document)) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
 static BOOL wait_for_home_layout(HWND window, LRESULT previousGeneration,
                                  int expectedMode,
                                  LRESULT *currentGeneration)
@@ -791,36 +3059,66 @@ static BOOL restore_window_size(HWND window, const RECT *original)
 
 static BOOL force_home_group_paint(HWND window, HWND formatBar)
 {
-    HIGHCONTRASTW contrast;
+    RECT client;
     LRESULT before = 0;
     LRESULT after = 0;
-    BOOL painted = FALSE;
-    BOOL highContrast = FALSE;
-    BOOL success;
+    HDC referenceDc = NULL;
+    HDC memoryDc = NULL;
+    HBITMAP bitmap = NULL;
+    HGDIOBJ previousBitmap = NULL;
+    BOOL success = FALSE;
 
-    ZeroMemory(&contrast, sizeof(contrast));
-    contrast.cbSize = sizeof(contrast);
-    if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast),
-                              &contrast, 0)) {
-        highContrast = (contrast.dwFlags & HCF_HIGHCONTRASTON) != 0;
-    }
     if (window == NULL || formatBar == NULL ||
+        !GetClientRect(formatBar, &client) ||
+        client.right <= client.left || client.bottom <= client.top ||
         !query_wordcraft_state(window, WCQ_HOME_GROUP_PAINT_COUNT, 0,
                                &before)) {
         return FALSE;
     }
-    painted = send_message_bounded(formatBar, WM_PAINT, 0, 0, NULL);
-    if (!painted ||
-        !query_wordcraft_state(window, WCQ_HOME_GROUP_PAINT_COUNT, 0,
-                               &after)) {
-        return FALSE;
+    referenceDc = GetDC(formatBar);
+    if (referenceDc == NULL) {
+        goto cleanup;
     }
-    success = highContrast || after > before;
+    memoryDc = CreateCompatibleDC(referenceDc);
+    bitmap = CreateCompatibleBitmap(
+        referenceDc, client.right - client.left,
+        client.bottom - client.top);
+    if (memoryDc == NULL || bitmap == NULL) {
+        goto cleanup;
+    }
+    previousBitmap = SelectObject(memoryDc, bitmap);
+    if (previousBitmap == NULL ||
+        previousBitmap == (HGDIOBJ)HGDI_ERROR ||
+        !send_message_bounded(formatBar, WM_PRINTCLIENT,
+                              (WPARAM)memoryDc,
+                              PRF_CLIENT | PRF_ERASEBKGND, NULL)) {
+        goto cleanup;
+    }
+    GdiFlush();
+    if (!query_wordcraft_state(window, WCQ_HOME_GROUP_PAINT_COUNT, 0,
+                               &after)) {
+        goto cleanup;
+    }
+    success = after > before;
+
+cleanup:
+    if (memoryDc != NULL && previousBitmap != NULL &&
+        previousBitmap != (HGDIOBJ)HGDI_ERROR) {
+        SelectObject(memoryDc, previousBitmap);
+    }
+    if (bitmap != NULL) {
+        DeleteObject(bitmap);
+    }
+    if (memoryDc != NULL) {
+        DeleteDC(memoryDc);
+    }
+    if (referenceDc != NULL) {
+        ReleaseDC(formatBar, referenceDc);
+    }
     if (!success) {
         fwprintf(stderr,
-                 L"Home group paint telemetry did not advance (painted=%d before=%lld after=%lld high_contrast=%d)\n",
-                 painted, (long long)before, (long long)after,
-                 highContrast);
+                 L"Home offscreen group paint telemetry did not advance (%lld -> %lld)\n",
+                 (long long)before, (long long)after);
     }
     return success;
 }
@@ -1334,6 +3632,164 @@ static BOOL focus_editor_from_ribbon(HWND window)
     return wait_for_ribbon_focus(window, RIBBON_FOCUS_EDITOR);
 }
 
+static BOOL focus_tabs_from_ribbon(HWND window)
+{
+    int attempt;
+
+    for (attempt = 0; attempt < 4; ++attempt) {
+        LRESULT focusArea = RIBBON_FOCUS_OTHER;
+
+        if (!query_wordcraft_state(window, WCQ_RIBBON_FOCUS_AREA, 0,
+                                   &focusArea)) {
+            return FALSE;
+        }
+        if (focusArea == RIBBON_FOCUS_TABS) {
+            return TRUE;
+        }
+        if (!send_message_bounded(window, WM_COMMAND,
+                                  MAKEWPARAM(IDM_RIBBON_FOCUS, 0), 0,
+                                  NULL)) {
+            return FALSE;
+        }
+    }
+    return wait_for_ribbon_focus(window, RIBBON_FOCUS_TABS);
+}
+
+static BOOL insert_undo_restores_text(HWND window, HWND editor,
+                                      const WCHAR *before,
+                                      LRESULT expectedPageCount)
+{
+    WCHAR restored[512];
+    LRESULT pageCount = 0;
+    LRESULT canUndo = 1;
+
+    return send_message_bounded(window, WM_COMMAND,
+                                MAKEWPARAM(IDM_EDIT_UNDO, 0), 0, NULL) &&
+           get_window_text_bounded(editor, restored,
+                                   ARRAYSIZE(restored)) &&
+           wcscmp(restored, before) == 0 &&
+           query_wordcraft_state(window, WCQ_PAGE_COUNT, 0,
+                                 &pageCount) &&
+           pageCount == expectedPageCount &&
+           send_message_bounded(editor, EM_CANUNDO, 0, 0, &canUndo) &&
+           canUndo == 0 &&
+           send_message_bounded(editor, EM_SETMODIFY, FALSE, 0, NULL);
+}
+
+static BOOL validate_insert_page_command(HWND window, HWND editor,
+                                         UINT command,
+                                         BOOL requireSingleBreak)
+{
+    WCHAR before[512];
+    WCHAR after[512];
+    LRESULT beforePages = 0;
+    LRESULT afterPages = 0;
+    LRESULT modified = 0;
+    size_t beforeLength;
+    size_t afterLength;
+    size_t index;
+    size_t breakCount = 0;
+
+    if (window == NULL || editor == NULL ||
+        (command != IDM_INSERT_PAGE_BREAK &&
+         command != IDM_INSERT_BLANK_PAGE) ||
+        !get_window_text_bounded(editor, before, ARRAYSIZE(before)) ||
+        !query_wordcraft_state(window, WCQ_PAGE_COUNT, 0, &beforePages)) {
+        return FALSE;
+    }
+    beforeLength = wcslen(before);
+    if (beforeLength + 3 >= ARRAYSIZE(after) ||
+        !send_message_bounded(editor, EM_EMPTYUNDOBUFFER, 0, 0, NULL) ||
+        !send_message_bounded(editor, EM_SETMODIFY, FALSE, 0, NULL) ||
+        !send_message_bounded(editor, EM_SETSEL, beforeLength,
+                              beforeLength, NULL) ||
+        !send_message_bounded(window, WM_COMMAND,
+                              MAKEWPARAM(command, 0), 0, NULL) ||
+        !get_window_text_bounded(editor, after, ARRAYSIZE(after)) ||
+        !query_wordcraft_state(window, WCQ_PAGE_COUNT, 0, &afterPages) ||
+        !send_message_bounded(editor, EM_GETMODIFY, 0, 0, &modified)) {
+        fwprintf(stderr,
+                 L"Insert page command %u setup/dispatch/query failed (error=%lu)\n",
+                 command, (unsigned long)GetLastError());
+        return FALSE;
+    }
+    afterLength = wcslen(after);
+    if (afterLength <= beforeLength ||
+        wcsncmp(after, before, beforeLength) != 0 ||
+        afterPages <= beforePages || modified == 0) {
+        fwprintf(stderr,
+                 L"Insert page command %u state mismatch (length %lu->%lu pages %ld->%ld modified=%ld prefix=%d)\n",
+                 command, (unsigned long)beforeLength,
+                 (unsigned long)afterLength, (long)beforePages,
+                 (long)afterPages, (long)modified,
+                 wcsncmp(after, before, min(beforeLength, afterLength)));
+        return FALSE;
+    }
+    for (index = beforeLength; index < afterLength; ++index) {
+        if (after[index] == L'\f') {
+            ++breakCount;
+        }
+    }
+    if (breakCount == 0 ||
+        (requireSingleBreak &&
+         (afterLength != beforeLength + 1 || breakCount != 1))) {
+        fwprintf(stderr,
+                 L"Insert page command %u break mismatch (inserted=%lu formfeeds=%lu)\n",
+                 command, (unsigned long)(afterLength - beforeLength),
+                 (unsigned long)breakCount);
+        return FALSE;
+    }
+    if (!insert_undo_restores_text(window, editor, before, beforePages)) {
+        fwprintf(stderr,
+                 L"Insert page command %u did not undo atomically\n",
+                 command);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL validate_insert_datetime_command(HWND window, HWND editor)
+{
+    WCHAR before[512];
+    WCHAR after[512];
+    LRESULT beforePages = 0;
+    LRESULT modified = 0;
+    size_t beforeLength;
+    size_t afterLength;
+    size_t insertion = 4;
+    size_t insertedLength;
+
+    if (window == NULL || editor == NULL ||
+        !get_window_text_bounded(editor, before, ARRAYSIZE(before)) ||
+        !query_wordcraft_state(window, WCQ_PAGE_COUNT, 0, &beforePages)) {
+        return FALSE;
+    }
+    beforeLength = wcslen(before);
+    if (beforeLength < insertion ||
+        !send_message_bounded(editor, EM_EMPTYUNDOBUFFER, 0, 0, NULL) ||
+        !send_message_bounded(editor, EM_SETMODIFY, FALSE, 0, NULL) ||
+        !send_message_bounded(editor, EM_SETSEL, insertion, insertion,
+                              NULL) ||
+        !send_message_bounded(window, WM_COMMAND,
+                              MAKEWPARAM(IDM_INSERT_DATETIME, 0), 0,
+                              NULL) ||
+        !get_window_text_bounded(editor, after, ARRAYSIZE(after)) ||
+        !send_message_bounded(editor, EM_GETMODIFY, 0, 0, &modified)) {
+        return FALSE;
+    }
+    afterLength = wcslen(after);
+    if (afterLength <= beforeLength || modified == 0) {
+        return FALSE;
+    }
+    insertedLength = afterLength - beforeLength;
+    if (wcsncmp(after, before, insertion) != 0 ||
+        wcscmp(after + insertion + insertedLength,
+               before + insertion) != 0) {
+        return FALSE;
+    }
+    return insert_undo_restores_text(window, editor, before, beforePages);
+}
+
 static BOOL paper_size_state_matches(HWND window, HWND editor,
                                      HWND paperSizeCombo,
                                      PaperSizeId expectedId,
@@ -1567,13 +4023,102 @@ static void stop_process(PROCESS_INFORMATION *process)
     process->hProcess = NULL;
 }
 
+static BOOL resolve_test_app(const WCHAR *fallback, WCHAR *executable,
+                             DWORD capacity)
+{
+    WCHAR configured[PATH_CAPACITY];
+    const WCHAR *candidate = fallback;
+    DWORD length;
+    DWORD error;
+
+    SetLastError(ERROR_SUCCESS);
+    length = GetEnvironmentVariableW(L"WORDCRAFT_TEST_APP", configured,
+                                     ARRAYSIZE(configured));
+    error = GetLastError();
+    if (length == 0) {
+        if (error != ERROR_SUCCESS && error != ERROR_ENVVAR_NOT_FOUND) {
+            return FALSE;
+        }
+    } else {
+        if (length >= ARRAYSIZE(configured)) {
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+            return FALSE;
+        }
+        candidate = configured;
+    }
+
+    length = GetFullPathNameW(candidate, capacity, executable, NULL);
+    if (length == 0 || length >= capacity) {
+        if (length >= capacity) {
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        }
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL create_temp_probe_path(const WCHAR *extension, WCHAR *path,
+                                   size_t capacity)
+{
+    WCHAR tempDirectory[PATH_CAPACITY];
+    WCHAR reservedPath[PATH_CAPACITY];
+    DWORD directoryLength;
+    int attempt;
+
+    if (extension == NULL || extension[0] != L'.' ||
+        path == NULL || capacity == 0) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    path[0] = L'\0';
+    directoryLength = GetTempPathW(ARRAYSIZE(tempDirectory), tempDirectory);
+    if (directoryLength == 0 ||
+        directoryLength >= ARRAYSIZE(tempDirectory)) {
+        if (directoryLength >= ARRAYSIZE(tempDirectory)) {
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        }
+        return FALSE;
+    }
+
+    for (attempt = 0; attempt < 16; ++attempt) {
+        WCHAR *extensionStart;
+        DWORD moveError;
+
+        if (GetTempFileNameW(tempDirectory, L"WCP", 0, reservedPath) == 0) {
+            return FALSE;
+        }
+        extensionStart = wcsrchr(reservedPath, L'.');
+        if (extensionStart == NULL ||
+            FAILED(StringCchPrintfW(path, capacity, L"%.*s%s",
+                                    (int)(extensionStart - reservedPath),
+                                    reservedPath, extension))) {
+            DeleteFileW(reservedPath);
+            path[0] = L'\0';
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+            return FALSE;
+        }
+        if (MoveFileExW(reservedPath, path, MOVEFILE_WRITE_THROUGH)) {
+            return TRUE;
+        }
+        moveError = GetLastError();
+        DeleteFileW(reservedPath);
+        path[0] = L'\0';
+        if (moveError != ERROR_ALREADY_EXISTS &&
+            moveError != ERROR_FILE_EXISTS) {
+            SetLastError(moveError);
+            return FALSE;
+        }
+    }
+
+    SetLastError(ERROR_FILE_EXISTS);
+    return FALSE;
+}
+
 int wmain(void)
 {
     WCHAR executable[PATH_CAPACITY];
     WCHAR sample[PATH_CAPACITY];
     WCHAR longSample[PATH_CAPACITY];
-    WCHAR relativeSample[128];
-    WCHAR relativeLongSample[128];
     PROCESS_INFORMATION process;
     PROCESS_INFORMATION longProcess;
     HWND window = NULL;
@@ -1629,6 +4174,8 @@ int wmain(void)
     LRESULT ribbonCount = 0;
     LRESULT ribbonHash = 0;
     LRESULT commentCount = 0;
+    LRESULT chatCount = 0;
+    LRESULT versionCount = 0;
     LRESULT activeComment = -1;
     LRESULT commentMarginVisible = 0;
     LRESULT commentCardCount = 0;
@@ -1652,7 +4199,6 @@ int wmain(void)
     POINT commentClickPoint;
     LONG pageIndex;
     int ribbonIndex;
-    DWORD probeProcessId = GetCurrentProcessId();
     int result = 1;
 
     SetProcessDPIAware();
@@ -1661,14 +4207,11 @@ int wmain(void)
     sample[0] = L'\0';
     longSample[0] = L'\0';
 
-    if (FAILED(StringCchPrintfW(relativeSample, ARRAYSIZE(relativeSample),
-                                L"build\\gui_probe_input_%lu.txt", probeProcessId)) ||
-        FAILED(StringCchPrintfW(relativeLongSample, ARRAYSIZE(relativeLongSample),
-                                L"build\\gui_probe_long_input_%lu.rtf", probeProcessId)) ||
-        GetFullPathNameW(L"wordcraft.exe", ARRAYSIZE(executable), executable, NULL) == 0 ||
-        GetFullPathNameW(relativeSample, ARRAYSIZE(sample), sample, NULL) == 0 ||
-        GetFullPathNameW(relativeLongSample, ARRAYSIZE(longSample),
-                         longSample, NULL) == 0 ||
+    if (!create_temp_probe_path(L".txt", sample, ARRAYSIZE(sample)) ||
+        !create_temp_probe_path(L".rtf", longSample,
+                                ARRAYSIZE(longSample)) ||
+        !resolve_test_app(L"wordcraft.exe", executable,
+                          ARRAYSIZE(executable)) ||
         !write_probe_file(sample) || !write_long_probe_file(longSample)) {
         fwprintf(stderr, L"could not prepare GUI probe input (error=%lu)\n", GetLastError());
         goto cleanup;
@@ -1758,6 +4301,11 @@ int wmain(void)
     formatBar = find_control(window, IDC_FORMAT_BAR);
     commentEdit = find_control(window, IDC_COMMENT_EDIT);
     if (ribbonTabs == NULL || formatBar == NULL || commentEdit == NULL ||
+        find_control(window, IDM_REVIEW_DOCUMENT_CHAT) == NULL ||
+        find_control(window, IDM_REVIEW_VERSION_HISTORY) == NULL ||
+        !query_wordcraft_state(window, WCQ_CHAT_COUNT, 0, &chatCount) ||
+        !query_wordcraft_state(window, WCQ_VERSION_COUNT, 0, &versionCount) ||
+        chatCount != 0 || versionCount != 1 ||
         !query_wordcraft_state(window, WCQ_RIBBON_TAB_COUNT, 0,
                                &ribbonCount) ||
         ribbonCount != RIBBON_TAB_COUNT ||
@@ -1823,10 +4371,284 @@ int wmain(void)
         fwprintf(stderr, L"the compact Home ribbon layout contract failed\n");
         goto cleanup;
     }
-    if (!restore_window_size(window, &originalWindowRect) ||
+    if (!resize_window_for_home_layout(window, 2048, RIBBON_LAYOUT_FULL,
+                                       NULL) ||
+        !move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_INSERT) ||
+        !validate_insert_layout_contract(window, formatBar,
+                                         RIBBON_LAYOUT_FULL)) {
+        fwprintf(stderr,
+                 L"the full Insert ribbon group/control/icon contract failed\n");
+        goto cleanup;
+    }
+    if (!force_insert_ribbon_paint(window, formatBar)) {
+        fwprintf(stderr,
+                 L"the Insert ribbon group labels or control icons were not painted\n");
+        goto cleanup;
+    }
+    if (!resize_window_for_home_layout(window, 960,
+                                       RIBBON_LAYOUT_COMPACT, NULL) ||
+        !validate_insert_layout_contract(window, formatBar,
+                                         RIBBON_LAYOUT_COMPACT)) {
+        fwprintf(stderr,
+                 L"the compact Insert ribbon layout contract failed\n");
+        goto cleanup;
+    }
+    if (!resize_window_for_home_layout(window, 640,
+                                       RIBBON_LAYOUT_COLLAPSED, NULL) ||
+        !validate_insert_layout_contract(window, formatBar,
+                                         RIBBON_LAYOUT_COLLAPSED)) {
+        fwprintf(stderr,
+                 L"the collapsed Insert ribbon layout contract failed\n");
+        goto cleanup;
+    }
+    if (!resize_window_for_home_layout(window, 2048,
+                                       RIBBON_LAYOUT_FULL, NULL) ||
+        !validate_insert_layout_contract(window, formatBar,
+                                         RIBBON_LAYOUT_FULL)) {
+        fwprintf(stderr,
+                 L"the full Insert ribbon layout did not restore after responsive checks\n");
+        goto cleanup;
+    }
+    if (!move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_HOME) ||
+        !insert_controls_are_hidden(window, formatBar) ||
+        !move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_INSERT) ||
+        !focus_tabs_from_ribbon(window) ||
+        !send_message_bounded(window, WM_COMMAND,
+                              MAKEWPARAM(IDM_RIBBON_FOCUS, 0), 0, NULL) ||
+        !wait_for_ribbon_focus(window, RIBBON_FOCUS_PANEL) ||
+        !wait_for_ribbon_control_focus(window,
+                                       IDM_INSERT_COVER_PAGE)) {
+        LRESULT focusArea = -1;
+        LRESULT focusId = -1;
+        query_wordcraft_state(window, WCQ_RIBBON_FOCUS_AREA, 0,
+                              &focusArea);
+        query_wordcraft_state(window, WCQ_RIBBON_FOCUSED_CONTROL_ID, 0,
+                              &focusId);
+        fwprintf(stderr,
+                 L"Insert controls did not hide with the page or accept F6 focus in visual order (area=%ld id=%ld)\n",
+                 (long)focusArea, (long)focusId);
+        goto cleanup;
+    }
+    if (!validate_insert_page_command(window, editor,
+                                      IDM_INSERT_PAGE_BREAK, TRUE)) {
+        fwprintf(stderr,
+                 L"Insert Page Break was not a one-step undoable pagination change\n");
+        goto cleanup;
+    }
+    if (!validate_insert_page_command(window, editor,
+                                      IDM_INSERT_BLANK_PAGE, FALSE)) {
+        fwprintf(stderr,
+                 L"Insert Blank Page was not a one-step undoable pagination change\n");
+        goto cleanup;
+    }
+    if (!validate_insert_datetime_command(window, editor)) {
+        fwprintf(stderr,
+                 L"Insert Date & Time did not preserve surrounding text or undo in one step\n");
+        goto cleanup;
+    }
+    if (!move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_DRAW)) {
+        fwprintf(stderr, L"the Draw ribbon tab could not be selected\n");
+        goto cleanup;
+    }
+    if (!validate_draw_layout_contract(window, editor, formatBar,
+                                       RIBBON_LAYOUT_FULL)) {
+        fwprintf(stderr,
+                 L"the full Draw ribbon group/control/icon contract failed\n");
+        goto cleanup;
+    }
+    if (!force_draw_ribbon_offscreen_paint(window, formatBar)) {
+        fwprintf(stderr,
+                 L"the Draw ribbon group labels or control icons were not painted offscreen\n");
+        goto cleanup;
+    }
+    if (!resize_window_for_home_layout(window, 960,
+                                       RIBBON_LAYOUT_COMPACT, NULL) ||
+        !validate_draw_layout_contract(window, editor, formatBar,
+                                       RIBBON_LAYOUT_COMPACT)) {
+        fwprintf(stderr,
+                 L"the compact Draw ribbon layout contract failed\n");
+        goto cleanup;
+    }
+    if (!resize_window_for_home_layout(window, 560,
+                                       RIBBON_LAYOUT_COLLAPSED, NULL) ||
+        !validate_draw_layout_contract(window, editor, formatBar,
+                                       RIBBON_LAYOUT_COLLAPSED)) {
+        fwprintf(stderr,
+                 L"the collapsed Draw ribbon layout contract failed\n");
+        goto cleanup;
+    }
+    if (!resize_window_for_home_layout(window, 2048,
+                                       RIBBON_LAYOUT_FULL, NULL) ||
+        !validate_draw_layout_contract(window, editor, formatBar,
+                                       RIBBON_LAYOUT_FULL)) {
+        fwprintf(stderr,
+                 L"the full Draw ribbon layout did not restore after responsive checks\n");
+        goto cleanup;
+    }
+    if (!move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_HOME) ||
+        !draw_controls_are_hidden(window, formatBar) ||
+        !move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_DRAW) ||
+        !focus_tabs_from_ribbon(window) ||
+        !send_message_bounded(window, WM_COMMAND,
+                              MAKEWPARAM(IDM_RIBBON_FOCUS, 0), 0, NULL) ||
+        !wait_for_ribbon_focus(window, RIBBON_FOCUS_PANEL) ||
+        !wait_for_ribbon_control_focus(window, IDM_DRAW_MODE)) {
+        LRESULT focusArea = -1;
+        LRESULT focusId = -1;
+        query_wordcraft_state(window, WCQ_RIBBON_FOCUS_AREA, 0,
+                              &focusArea);
+        query_wordcraft_state(window, WCQ_RIBBON_FOCUSED_CONTROL_ID, 0,
+                              &focusId);
+        fwprintf(stderr,
+                 L"Draw controls did not hide with the page or accept F6 focus in visual order (area=%ld id=%ld)\n",
+                 (long)focusArea, (long)focusId);
+        goto cleanup;
+    }
+    if (!validate_draw_nonmutating_commands(window, editor)) {
+        fwprintf(stderr,
+                 L"Draw tool, ruler, or background state changed document content or failed to synchronize checkmarks\n");
+        goto cleanup;
+    }
+    if (!move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_DESIGN) ||
+        !validate_design_layout_contract(window, formatBar,
+                                         RIBBON_LAYOUT_FULL)) {
+        fwprintf(stderr,
+                 L"the full Design ribbon group/control/icon/default-state contract failed\n");
+        goto cleanup;
+    }
+    if (!force_design_ribbon_offscreen_paint(window, formatBar)) {
+        fwprintf(stderr,
+                 L"the Design ribbon group labels or control icons were not painted offscreen\n");
+        goto cleanup;
+    }
+    if (!validate_design_gallery_contract(window, formatBar)) {
+        fwprintf(stderr,
+                 L"the Design style-set gallery open, paint, item, focus, or Escape contract failed\n");
+        goto cleanup;
+    }
+    if (!validate_design_active_selection(window, formatBar)) {
+        fwprintf(stderr,
+                 L"the Design active style-set selection or checkmark contract failed\n");
+        goto cleanup;
+    }
+    if (!resize_window_for_home_layout(window, 960,
+                                       RIBBON_LAYOUT_COMPACT, NULL) ||
+        !validate_design_layout_contract(window, formatBar,
+                                         RIBBON_LAYOUT_COMPACT)) {
+        fwprintf(stderr,
+                 L"the compact Design ribbon layout contract failed\n");
+        goto cleanup;
+    }
+    if (!resize_window_for_home_layout(window, 560,
+                                       RIBBON_LAYOUT_COLLAPSED, NULL) ||
+        !validate_design_layout_contract(window, formatBar,
+                                         RIBBON_LAYOUT_COLLAPSED)) {
+        fwprintf(stderr,
+                 L"the collapsed Design ribbon layout contract failed\n");
+        goto cleanup;
+    }
+    if (!resize_window_for_home_layout(window, 2048,
+                                       RIBBON_LAYOUT_FULL, NULL) ||
+        !validate_design_layout_contract(window, formatBar,
+                                         RIBBON_LAYOUT_FULL)) {
+        fwprintf(stderr,
+                 L"the full Design ribbon layout did not restore after responsive checks\n");
+        goto cleanup;
+    }
+    if (!move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_HOME) ||
+        !design_controls_are_hidden(window, formatBar) ||
+        !move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_DESIGN) ||
+        !focus_tabs_from_ribbon(window) ||
+        !send_message_bounded(window, WM_COMMAND,
+                              MAKEWPARAM(IDM_RIBBON_FOCUS, 0), 0, NULL) ||
+        !wait_for_ribbon_focus(window, RIBBON_FOCUS_PANEL) ||
+        !wait_for_ribbon_control_focus(window, IDM_DESIGN_THEMES)) {
+        LRESULT focusArea = -1;
+        LRESULT focusId = -1;
+        query_wordcraft_state(window, WCQ_RIBBON_FOCUS_AREA, 0,
+                              &focusArea);
+        query_wordcraft_state(window, WCQ_RIBBON_FOCUSED_CONTROL_ID, 0,
+                              &focusId);
+        fwprintf(
+            stderr,
+            L"Design controls did not hide with the page or accept F6 focus in visual order (area=%ld id=%ld)\n",
+            (long)focusArea, (long)focusId);
+        goto cleanup;
+    }
+    if (!validate_design_unsupported_nonmutating(
+            window, editor, formatBar)) {
+        fwprintf(
+            stderr,
+            L"unsupported Design commands changed document content or coordinated Design state\n");
+        goto cleanup;
+    }
+    if (!move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_VIEW) ||
+        !validate_view_layout_contract(window, formatBar,
+                                       RIBBON_LAYOUT_FULL)) {
+        fwprintf(stderr,
+                 L"the full View ribbon group/control/icon/default-state contract failed\n");
+        goto cleanup;
+    }
+    if (!force_view_ribbon_offscreen_paint(window, formatBar)) {
+        fwprintf(stderr,
+                 L"the View ribbon group labels or control icons were not painted offscreen\n");
+        goto cleanup;
+    }
+    if (!resize_window_for_home_layout(window, 960,
+                                       RIBBON_LAYOUT_COMPACT, NULL) ||
+        !validate_view_layout_contract(window, formatBar,
+                                       RIBBON_LAYOUT_COMPACT)) {
+        fwprintf(stderr,
+                 L"the compact View ribbon layout contract failed\n");
+        goto cleanup;
+    }
+    if (!resize_window_for_home_layout(window, 560,
+                                       RIBBON_LAYOUT_COLLAPSED, NULL) ||
+        !validate_view_layout_contract(window, formatBar,
+                                       RIBBON_LAYOUT_COLLAPSED)) {
+        fwprintf(stderr,
+                 L"the collapsed View ribbon layout contract failed\n");
+        goto cleanup;
+    }
+    if (!resize_window_for_home_layout(window, 2048,
+                                       RIBBON_LAYOUT_FULL, NULL) ||
+        !validate_view_layout_contract(window, formatBar,
+                                       RIBBON_LAYOUT_FULL)) {
+        fwprintf(stderr,
+                 L"the full View ribbon layout did not restore after responsive checks\n");
+        goto cleanup;
+    }
+    if (!move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_HOME) ||
+        !view_controls_are_hidden(window, formatBar) ||
+        !move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_VIEW) ||
+        !focus_tabs_from_ribbon(window) ||
+        !send_message_bounded(window, WM_COMMAND,
+                              MAKEWPARAM(IDM_RIBBON_FOCUS, 0), 0, NULL) ||
+        !wait_for_ribbon_focus(window, RIBBON_FOCUS_PANEL) ||
+        !wait_for_ribbon_control_focus(window, IDM_VIEW_READ_MODE)) {
+        LRESULT focusArea = -1;
+        LRESULT focusId = -1;
+        query_wordcraft_state(window, WCQ_RIBBON_FOCUS_AREA, 0,
+                              &focusArea);
+        query_wordcraft_state(window, WCQ_RIBBON_FOCUSED_CONTROL_ID, 0,
+                              &focusId);
+        fwprintf(
+            stderr,
+            L"View controls did not hide with the page or accept F6 focus in visual order (area=%ld id=%ld)\n",
+            (long)focusArea, (long)focusId);
+        goto cleanup;
+    }
+    if (!validate_view_nonmutating_commands(window, editor)) {
+        fwprintf(
+            stderr,
+            L"View modes, movement, overlays, focus, or zoom-fit actions changed document content or failed to synchronize state\n");
+        goto cleanup;
+    }
+    if (!move_ribbon_to_tab(window, ribbonTabs, RIBBON_TAB_HOME) ||
+        !restore_window_size(window, &originalWindowRect) ||
         !focus_editor_from_ribbon(window)) {
         fwprintf(stderr,
-                 L"the Home ribbon probe could not restore its initial size and editor focus\n");
+                 L"the ribbon probes could not restore their initial size, Home tab, and editor focus\n");
         goto cleanup;
     }
     if (!send_message_bounded(window, WM_COMMAND,
@@ -2177,14 +4999,26 @@ int wmain(void)
         fwprintf(stderr, L"simulated edit did not mark the document dirty: '%s'\n", text);
         goto cleanup;
     }
-    if (!send_message_bounded(window, WM_COMMAND,
-                              MAKEWPARAM(IDM_FILE_SAVE, 0), 0, NULL)) {
-        fwprintf(stderr, L"save command timed out\n");
+    if (!PostMessageW(window, WM_COMMAND,
+                      MAKEWPARAM(IDM_FILE_SAVE, 0), 0) ||
+        !accept_next_message_box(process.dwProcessId)) {
+        fwprintf(stderr,
+                 L"plain-text metadata warning was not shown or accepted\n");
         goto cleanup;
     }
-    if (!verify_saved_file(sample)) {
+    {
+        int saveAttempt;
+        BOOL saved = FALSE;
+        for (saveAttempt = 0; saveAttempt < 50 && !saved; ++saveAttempt) {
+            saved = verify_saved_file(sample);
+            if (!saved) {
+                Sleep(100);
+            }
+        }
+        if (!saved) {
         fwprintf(stderr, L"Unicode text save or atomic replacement failed\n");
         goto cleanup;
+        }
     }
     if (!close_wordcraft_cleanly(window, &process)) {
         fwprintf(stderr, L"WordCraft did not close cleanly after the short-document probe\n");
@@ -3391,6 +6225,22 @@ int wmain(void)
            "home_ribbon_full=ok home_ribbon_compact=ok "
            "home_ribbon_collapsed=ok collapsed_style_combo=ok "
            "collapsed_focus_fallback=ok "
+           "insert_ribbon_groups=ok insert_ribbon_controls=ok "
+           "insert_ribbon_icons=ok insert_ribbon_full=ok "
+           "insert_ribbon_compact=ok insert_ribbon_collapsed=ok "
+           "insert_ribbon_focus=ok "
+           "insert_page_break=ok insert_blank_page=ok "
+           "insert_datetime=ok "
+           "draw_ribbon_groups=ok draw_ribbon_controls=ok "
+           "draw_ribbon_icons=ok draw_ribbon_full=ok "
+           "draw_ribbon_compact=ok draw_ribbon_collapsed=ok "
+           "draw_ribbon_focus=ok draw_state_toggles=ok "
+           "draw_commands_nonmutating=ok "
+           "view_ribbon_groups=ok view_ribbon_controls=ok "
+           "view_ribbon_icons=ok view_ribbon_full=ok "
+           "view_ribbon_compact=ok view_ribbon_collapsed=ok "
+           "view_ribbon_focus=ok view_default_state=ok "
+           "view_state_toggles=ok view_commands_nonmutating=ok "
            "home_ribbon_formatting=ok home_ribbon_styles=ok "
            "style_partial_paragraph=ok style_undo_atomic=ok "
            "style_selection_endpoints=ok "

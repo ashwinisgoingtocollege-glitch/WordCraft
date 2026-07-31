@@ -209,6 +209,106 @@ static BOOL wait_for_revision_convergence(HWND host, HWND client,
     return FALSE;
 }
 
+static UINT probe_hash_text(const WCHAR *text)
+{
+    UINT hash = 2166136261u;
+
+    if (text == NULL) {
+        return 0u;
+    }
+    while (*text != L'\0') {
+        hash ^= (UINT)*text++;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+static BOOL wait_for_chat_convergence(HWND host, HWND client,
+                                      LRESULT expectedCount,
+                                      UINT expectedTextHash)
+{
+    DWORD start = GetTickCount();
+
+    do {
+        LRESULT hostCount = 0;
+        LRESULT clientCount = 0;
+        LRESULT hostHash = 0;
+        LRESULT clientHash = 0;
+        LRESULT hostAuthor = 0;
+        LRESULT clientAuthor = 0;
+        LPARAM index = expectedCount > 0 ? expectedCount - 1 : 0;
+
+        if (query_state(host, WCQ_CHAT_COUNT, &hostCount) &&
+            query_state(client, WCQ_CHAT_COUNT, &clientCount) &&
+            query_state_component(host, WCQ_CHAT_TEXT_HASH,
+                                  index, &hostHash) &&
+            query_state_component(client, WCQ_CHAT_TEXT_HASH,
+                                  index, &clientHash) &&
+            query_state_component(host, WCQ_CHAT_AUTHOR_HASH,
+                                  index, &hostAuthor) &&
+            query_state_component(client, WCQ_CHAT_AUTHOR_HASH,
+                                  index, &clientAuthor) &&
+            hostCount == expectedCount &&
+            clientCount == expectedCount &&
+            (UINT)(DWORD_PTR)hostHash == expectedTextHash &&
+            (UINT)(DWORD_PTR)clientHash == expectedTextHash &&
+            hostAuthor != 0 && hostAuthor == clientAuthor) {
+            return TRUE;
+        }
+        Sleep(25);
+    } while (GetTickCount() - start < LIVE_GUI_TIMEOUT_MS);
+    return FALSE;
+}
+
+static BOOL wait_for_local_chat(HWND window, LRESULT expectedCount,
+                                LPARAM expectedIndex,
+                                UINT expectedTextHash)
+{
+    DWORD start = GetTickCount();
+
+    do {
+        LRESULT count = 0;
+        LRESULT textHash = 0;
+
+        if (query_state(window, WCQ_CHAT_COUNT, &count) &&
+            query_state_component(window, WCQ_CHAT_TEXT_HASH,
+                                  expectedIndex, &textHash) &&
+            count == expectedCount &&
+            (UINT)(DWORD_PTR)textHash == expectedTextHash) {
+            return TRUE;
+        }
+        Sleep(25);
+    } while (GetTickCount() - start < LIVE_GUI_TIMEOUT_MS);
+    return FALSE;
+}
+
+static BOOL wait_for_version_author_convergence(HWND host, HWND client)
+{
+    DWORD start = GetTickCount();
+
+    do {
+        LRESULT hostCount = 0;
+        LRESULT clientCount = 0;
+        LRESULT hostAuthor = 0;
+        LRESULT clientAuthor = 0;
+
+        if (query_state(host, WCQ_VERSION_COUNT, &hostCount) &&
+            query_state(client, WCQ_VERSION_COUNT, &clientCount) &&
+            hostCount >= 2 && hostCount == clientCount &&
+            query_state_component(
+                host, WCQ_VERSION_AUTHOR_HASH, hostCount - 1,
+                &hostAuthor) &&
+            query_state_component(
+                client, WCQ_VERSION_AUTHOR_HASH, clientCount - 1,
+                &clientAuthor) &&
+            hostAuthor != 0 && hostAuthor == clientAuthor) {
+            return TRUE;
+        }
+        Sleep(25);
+    } while (GetTickCount() - start < LIVE_GUI_TIMEOUT_MS);
+    return FALSE;
+}
+
 static BOOL wait_for_paper_state(HWND window, PaperSizeId expectedId,
                                  LRESULT expectedWidth,
                                  LRESULT expectedHeight)
@@ -383,10 +483,51 @@ static void stop_process(PROCESS_INFORMATION *process)
     process->hProcess = NULL;
 }
 
+static BOOL resolve_test_app(const WCHAR *fallback, WCHAR *executable,
+                             DWORD capacity)
+{
+    WCHAR configured[PATH_CAPACITY];
+    const WCHAR *candidate = fallback;
+    DWORD length;
+    DWORD error;
+
+    SetLastError(ERROR_SUCCESS);
+    length = GetEnvironmentVariableW(L"WORDCRAFT_TEST_APP", configured,
+                                     ARRAYSIZE(configured));
+    error = GetLastError();
+    if (length == 0) {
+        if (error != ERROR_SUCCESS && error != ERROR_ENVVAR_NOT_FOUND) {
+            return FALSE;
+        }
+    } else {
+        if (length >= ARRAYSIZE(configured)) {
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+            return FALSE;
+        }
+        candidate = configured;
+    }
+
+    length = GetFullPathNameW(candidate, capacity, executable, NULL);
+    if (length == 0 || length >= capacity) {
+        if (length >= capacity) {
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        }
+        return FALSE;
+    }
+    return TRUE;
+}
+
 int wmain(void)
 {
     static const char token[] = "00112233445566778899AABBCCDDEEFF";
+    static const WCHAR collaborativeChat[] =
+        L"Live review \x03A9 \x4F60\x597D \x2014 caf\u00E9";
+    static const WCHAR collaborativeChatFollowup[] =
+        L"Queued follow-up before the content update";
+    static const WCHAR collaborativeContent[] =
+        L"Client chat and content update \x03A9";
     WCHAR executable[PATH_CAPACITY];
+    WCHAR fallback[PATH_CAPACITY];
     WCHAR sample[PATH_CAPACITY];
     WCHAR modulePath[PATH_CAPACITY];
     WCHAR *slash;
@@ -416,8 +557,9 @@ int wmain(void)
         return 3;
     }
     *slash = L'\0';
-    if (FAILED(StringCchPrintfW(executable, ARRAYSIZE(executable),
-                                L"%s\\..\\wordcraft.exe", modulePath))) {
+    if (FAILED(StringCchPrintfW(fallback, ARRAYSIZE(fallback),
+                                L"%s\\..\\wordcraft.exe", modulePath)) ||
+        !resolve_test_app(fallback, executable, ARRAYSIZE(executable))) {
         return 4;
     }
     tempLength = GetTempPathW(ARRAYSIZE(sample), sample);
@@ -532,6 +674,92 @@ int wmain(void)
             !wait_for_state(clientWindow, WCQ_LIVE_APPLYING_REMOTE, 0)) {
             fwprintf(stderr, L"remote application echoed or did not settle\n");
             result = 16;
+            goto cleanup;
+        }
+    }
+
+    {
+        HWND chatDialog;
+        HWND chatMessage;
+        HWND chatSend;
+        HWND chatClose;
+
+        if (!PostMessageW(clientWindow, WM_COMMAND,
+                          MAKEWPARAM(IDM_REVIEW_DOCUMENT_CHAT, 0), 0)) {
+            fwprintf(stderr, L"could not open collaborative Document Chat\n");
+            result = 26;
+            goto cleanup;
+        }
+        chatDialog = wait_for_dialog_with_control(
+            clientProcess.dwProcessId, IDC_CHAT_MESSAGE, NULL);
+        chatMessage = chatDialog != NULL
+                          ? GetDlgItem(chatDialog, IDC_CHAT_MESSAGE)
+                          : NULL;
+        chatSend = chatDialog != NULL
+                       ? GetDlgItem(chatDialog, IDC_CHAT_SEND)
+                       : NULL;
+        if (chatDialog == NULL || chatMessage == NULL || chatSend == NULL ||
+            GetDlgItem(chatDialog, IDC_CHAT_TRANSCRIPT) == NULL ||
+            !send_bounded(chatMessage, WM_SETTEXT, 0,
+                          (LPARAM)collaborativeChat, NULL) ||
+            !send_bounded(chatSend, BM_CLICK, 0, 0, NULL) ||
+            !wait_for_local_chat(
+                clientWindow, 1, 0,
+                probe_hash_text(collaborativeChat)) ||
+            !send_bounded(chatMessage, WM_SETTEXT, 0,
+                          (LPARAM)collaborativeChatFollowup, NULL) ||
+            !send_bounded(chatSend, BM_CLICK, 0, 0, NULL) ||
+            !wait_for_local_chat(
+                clientWindow, 2, 1,
+                probe_hash_text(collaborativeChatFollowup)) ||
+            !send_bounded(clientEditor, WM_SETTEXT, 0,
+                          (LPARAM)collaborativeContent, NULL) ||
+            !wait_for_text(hostEditor, collaborativeContent) ||
+            !wait_for_text(clientEditor, collaborativeContent) ||
+            !wait_for_chat_convergence(
+                hostWindow, clientWindow, 2,
+                probe_hash_text(collaborativeChatFollowup)) ||
+            !wait_for_state(hostWindow, WCQ_LIVE_DOCUMENT_PENDING, 0) ||
+            !wait_for_state(clientWindow, WCQ_LIVE_DOCUMENT_PENDING, 0) ||
+            !wait_for_version_author_convergence(
+                hostWindow, clientWindow)) {
+            LRESULT hostChats = 0;
+            LRESULT clientChats = 0;
+            LRESULT hostPending = 0;
+            LRESULT clientPending = 0;
+            LRESULT hostLiveRevision = 0;
+            LRESULT clientLiveRevision = 0;
+            (void)query_state(hostWindow, WCQ_CHAT_COUNT,
+                              &hostChats);
+            (void)query_state(clientWindow, WCQ_CHAT_COUNT,
+                              &clientChats);
+            (void)query_state(hostWindow,
+                              WCQ_LIVE_DOCUMENT_PENDING,
+                              &hostPending);
+            (void)query_state(clientWindow,
+                              WCQ_LIVE_DOCUMENT_PENDING,
+                              &clientPending);
+            (void)query_state(hostWindow, WCQ_LIVE_REVISION_LOW,
+                              &hostLiveRevision);
+            (void)query_state(clientWindow, WCQ_LIVE_REVISION_LOW,
+                              &clientLiveRevision);
+            fwprintf(
+                stderr,
+                L"client chat/content update did not converge together "
+                L"(chat=%ld/%ld pending=%ld/%ld rev=%ld/%ld)\n",
+                (long)hostChats, (long)clientChats,
+                (long)hostPending, (long)clientPending,
+                (long)hostLiveRevision, (long)clientLiveRevision);
+            result = 27;
+            goto cleanup;
+        }
+        chatClose = GetDlgItem(chatDialog, IDCANCEL);
+        if (chatClose == NULL ||
+            !send_bounded(chatClose, BM_CLICK, 0, 0, NULL) ||
+            !wait_for_window_destroyed(chatDialog)) {
+            fwprintf(stderr,
+                     L"collaborative Document Chat did not close promptly\n");
+            result = 28;
             goto cleanup;
         }
     }
@@ -687,7 +915,9 @@ int wmain(void)
     }
 
     printf("gui_initial_rtf=ok gui_comments=ok gui_bidirectional_sync=ok "
-           "no_echo=ok paper_size_sync=ok clients=1 leave_flush=ok "
+           "no_echo=ok chat_content_sync=ok canonical_authors=ok "
+           "paper_size_sync=ok "
+           "clients=1 leave_flush=ok "
            "invalid_invite=ok "
            "clean_exit=ok\n");
     result = 0;

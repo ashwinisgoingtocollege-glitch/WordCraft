@@ -731,7 +731,8 @@ int wmain(void)
     if (wcscmp(text, sample) != 0 || selection.cpMin != 2 ||
         selection.cpMax != 8 || notifications.changes < 1 ||
         notifications.selections < 1 || !notifications.headersValid ||
-        richEditOle == NULL) {
+        richEditOle == NULL ||
+        SendMessageW(editor, EM_GETQUERYRTFOBJ, 0, 0) == 0) {
         fwprintf(stderr,
                  L"renderer message parity failed text='%ls' sel=%ld:%ld change=%ld selection=%ld ole=%d\n",
                  text, selection.cpMin, selection.cpMax,

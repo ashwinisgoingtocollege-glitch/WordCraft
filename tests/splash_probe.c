@@ -592,6 +592,40 @@ static void stop_failed_process(PROCESS_INFORMATION *process,
     CloseHandle(process->hProcess);
 }
 
+static BOOL resolve_test_app(const WCHAR *fallback, WCHAR *executable,
+                             DWORD capacity)
+{
+    WCHAR configured[PATH_CAPACITY];
+    const WCHAR *candidate = fallback;
+    DWORD length;
+    DWORD error;
+
+    SetLastError(ERROR_SUCCESS);
+    length = GetEnvironmentVariableW(L"WORDCRAFT_TEST_APP", configured,
+                                     ARRAYSIZE(configured));
+    error = GetLastError();
+    if (length == 0) {
+        if (error != ERROR_SUCCESS && error != ERROR_ENVVAR_NOT_FOUND) {
+            return FALSE;
+        }
+    } else {
+        if (length >= ARRAYSIZE(configured)) {
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+            return FALSE;
+        }
+        candidate = configured;
+    }
+
+    length = GetFullPathNameW(candidate, capacity, executable, NULL);
+    if (length == 0 || length >= capacity) {
+        if (length >= capacity) {
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        }
+        return FALSE;
+    }
+    return TRUE;
+}
+
 int wmain(void)
 {
     WCHAR executable[PATH_CAPACITY];
@@ -639,11 +673,11 @@ int wmain(void)
     ZeroMemory(&minimalUi, sizeof(minimalUi));
     previousHold[0] = L'\0';
     if (!query_high_contrast(&highContrast) ||
-        GetFullPathNameW(L"wordcraft.exe", ARRAYSIZE(executable),
-                         executable, NULL) == 0 ||
+        !resolve_test_app(L"wordcraft.exe", executable,
+                          ARRAYSIZE(executable)) ||
         FAILED(StringCchPrintfW(commandLine, ARRAYSIZE(commandLine),
                                 L"\"%s\"", executable))) {
-        fwprintf(stderr, L"splash probe could not prepare wordcraft.exe\n");
+        fwprintf(stderr, L"splash probe could not prepare WordCraft\n");
         goto cleanup;
     }
     SetLastError(ERROR_SUCCESS);
