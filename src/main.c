@@ -278,6 +278,10 @@ static void draw_minimal_ribbon_surface(AppState *app, HWND window, HDC dc)
     DeleteObject(brush);
     app->uiPanelCurveCount = draw_ribbon_edge_curves(app, dc, &card);
     ribbon_paint_home_groups(app, dc);
+    ribbon_paint_insert_groups(app, dc);
+    ribbon_paint_draw_groups(app, dc);
+    ribbon_paint_design_groups(app, dc);
+    ribbon_paint_view_groups(app, dc);
 }
 
 static const WCHAR *minimal_button_display_text(UINT id)
@@ -347,6 +351,7 @@ static LRESULT draw_minimal_format_button(AppState *app, NMCUSTOMDRAW *draw)
     int radius;
     int penWidth;
     const WCHAR *displayText;
+    UINT captionFlags;
 
     if (draw->dwDrawStage != CDDS_PREPAINT) {
         return CDRF_DODEFAULT;
@@ -429,14 +434,28 @@ static LRESULT draw_minimal_format_button(AppState *app, NMCUSTOMDRAW *draw)
     if (font != NULL) {
         previousFont = SelectObject(draw->hdc, font);
     }
+    captionFlags = DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
+    ribbon_draw_insert_button_icon(
+        app, button, draw->hdc, &shape, textColor, &textRect,
+        &captionFlags);
+    ribbon_draw_draw_button_icon(
+        app, button, draw->hdc, &shape, textColor, &textRect,
+        &captionFlags);
+    ribbon_draw_design_button_icon(
+        app, button, draw->hdc, &shape, textColor, &textRect,
+        &captionFlags);
+    ribbon_draw_view_button_icon(
+        app, button, draw->hdc, &shape, textColor, &textRect,
+        &captionFlags);
     displayText = minimal_button_display_text((UINT)GetDlgCtrlID(button));
     if (displayText != NULL) {
         StringCchCopyW(caption, ARRAYSIZE(caption), displayText);
     } else {
         GetWindowTextW(button, caption, ARRAYSIZE(caption));
     }
-    DrawTextW(draw->hdc, caption, -1, &textRect,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    if (captionFlags != 0 && !IsRectEmpty(&textRect)) {
+        DrawTextW(draw->hdc, caption, -1, &textRect, captionFlags);
+    }
     if (previousFont != NULL) {
         SelectObject(draw->hdc, previousFont);
     }
@@ -466,6 +485,10 @@ static LRESULT CALLBACK format_bar_subclass_proc(HWND hwnd, UINT message,
         HDC dc = GetDC(hwnd);
         if (dc != NULL) {
             ribbon_paint_home_groups(app, dc);
+            ribbon_paint_insert_groups(app, dc);
+            ribbon_paint_draw_groups(app, dc);
+            ribbon_paint_design_groups(app, dc);
+            ribbon_paint_view_groups(app, dc);
             ReleaseDC(hwnd, dc);
         }
         return result;
@@ -473,6 +496,10 @@ static LRESULT CALLBACK format_bar_subclass_proc(HWND hwnd, UINT message,
                message == WM_PRINTCLIENT && wParam != 0) {
         LRESULT result = DefSubclassProc(hwnd, message, wParam, lParam);
         ribbon_paint_home_groups(app, (HDC)wParam);
+        ribbon_paint_insert_groups(app, (HDC)wParam);
+        ribbon_paint_draw_groups(app, (HDC)wParam);
+        ribbon_paint_design_groups(app, (HDC)wParam);
+        ribbon_paint_view_groups(app, (HDC)wParam);
         return result;
     } else if (app != NULL && message == WM_NOTIFY && lParam != 0 &&
                ((NMHDR *)lParam)->code == NM_CUSTOMDRAW) {
@@ -802,6 +829,86 @@ static void app_refresh_ui_font(AppState *app, UINT dpi)
     }
 }
 
+static void paint_view_guides(AppState *app, HWND editor)
+{
+    HDC dc;
+    RECT client;
+    RECT content;
+    COLORREF guideColor;
+    HPEN pen;
+    HGDIOBJ previousPen;
+    int dpiX;
+    int dpiY;
+    int spacing;
+    int x;
+    int y;
+
+    if (app == NULL || editor == NULL ||
+        (!app->viewRulerVisible && !app->viewGridlinesVisible)) {
+        return;
+    }
+    dc = GetDC(editor);
+    if (dc == NULL) {
+        return;
+    }
+    GetClientRect(editor, &client);
+    dpiX = max(1, GetDeviceCaps(dc, LOGPIXELSX));
+    dpiY = max(1, GetDeviceCaps(dc, LOGPIXELSY));
+    content = client;
+    content.left += MulDiv(
+        app->pageMargins.left, dpiX * max(10, app->zoomPercent), 100000);
+    content.right -= MulDiv(
+        app->pageMargins.right, dpiX * max(10, app->zoomPercent), 100000);
+    content.top += MulDiv(
+        app->pageMargins.top, dpiY * max(10, app->zoomPercent), 100000);
+    content.bottom -= MulDiv(
+        app->pageMargins.bottom, dpiY * max(10, app->zoomPercent), 100000);
+    guideColor = blend_color(
+        app->palette.pageBackground, app->palette.controlBorder,
+        app->darkMode ? 22 : 14);
+    pen = CreatePen(PS_DOT, 1, guideColor);
+    if (pen == NULL) {
+        ReleaseDC(editor, dc);
+        return;
+    }
+    previousPen = SelectObject(dc, pen);
+    if (app->viewGridlinesVisible && content.right > content.left &&
+        content.bottom > content.top) {
+        spacing = max(8, app_scale(editor, 24));
+        for (x = content.left; x < content.right; x += spacing) {
+            MoveToEx(dc, x, content.top, NULL);
+            LineTo(dc, x, content.bottom);
+        }
+        for (y = content.top; y < content.bottom; y += spacing) {
+            MoveToEx(dc, content.left, y, NULL);
+            LineTo(dc, content.right, y);
+        }
+    }
+    if (app->viewRulerVisible && client.right > client.left) {
+        RECT ruler = client;
+        int height = max(16, app_scale(editor, 22));
+        int tick = max(8, app_scale(editor, 12));
+
+        ruler.bottom = min(client.bottom, client.top + height);
+        SetDCBrushColor(
+            dc, blend_color(app->palette.pageBackground,
+                            app->palette.controlBackground, 34));
+        FillRect(dc, &ruler, (HBRUSH)GetStockObject(DC_BRUSH));
+        SelectObject(dc, pen);
+        MoveToEx(dc, ruler.left, ruler.bottom - 1, NULL);
+        LineTo(dc, ruler.right, ruler.bottom - 1);
+        for (x = ruler.left; x < ruler.right; x += tick) {
+            int tickHeight = ((x - ruler.left) / tick) % 4 == 0
+                                 ? height / 2 : height / 3;
+            MoveToEx(dc, x, ruler.bottom - 1, NULL);
+            LineTo(dc, x, ruler.bottom - tickHeight);
+        }
+    }
+    SelectObject(dc, previousPen);
+    DeleteObject(pen);
+    ReleaseDC(editor, dc);
+}
+
 static LRESULT CALLBACK editor_subclass_proc(HWND hwnd, UINT message,
                                              WPARAM wParam, LPARAM lParam,
                                              UINT_PTR subclassId,
@@ -813,6 +920,7 @@ static LRESULT CALLBACK editor_subclass_proc(HWND hwnd, UINT message,
     if (message == WM_PAINT) {
         result = DefSubclassProc(hwnd, message, wParam, lParam);
         if (app != NULL) {
+            paint_view_guides(app, hwnd);
             assist_paint_overlays(app, hwnd);
             comments_paint_overlays(app, hwnd);
         }
@@ -824,6 +932,13 @@ static LRESULT CALLBACK editor_subclass_proc(HWND hwnd, UINT message,
         comments_cancel_draft(app);
     }
     if (app != NULL && message == WM_KEYDOWN) {
+        if (wParam == VK_ESCAPE && app->focusMode) {
+            app->focusMode = FALSE;
+            app_layout(app);
+            app_update_command_ui(app);
+            SetFocus(app->editor);
+            return 0;
+        }
         if (wParam == VK_ESCAPE && assist_has_completion(app)) {
             assist_clear_completion(app);
             return 0;
@@ -1097,7 +1212,7 @@ BOOL app_create_children(AppState *app)
     eventMask = SendMessageW(app->editor, EM_GETEVENTMASK, 0, 0);
     SendMessageW(app->editor, EM_SETEVENTMASK, 0,
                  eventMask | ENM_CHANGE | ENM_SELCHANGE | ENM_UPDATE |
-                     ENM_PAGECHANGE | ENM_SCROLL);
+                     ENM_PAGECHANGE | ENM_SCROLL | ENM_LINK);
     if (!text_engine_initialize(app)) {
         return FALSE;
     }
@@ -1135,6 +1250,20 @@ void app_layout(AppState *app)
     compact = width < app_scale(app->mainWindow, 850);
     tabHeight = app_scale(app->mainWindow, 32);
     ribbonHeight = app_scale(app->mainWindow, 100);
+
+    if (app->focusMode) {
+        ShowWindow(app->toolbar, SW_HIDE);
+        ShowWindow(app->ribbonTabs, SW_HIDE);
+        ShowWindow(app->formatBar, SW_HIDE);
+        ShowWindow(app->statusBar, SW_HIDE);
+        MoveWindow(app->pageView, 0, 0, width,
+                   max(0, client.bottom - client.top), TRUE);
+        pageview_layout(app);
+        return;
+    }
+    ShowWindow(app->toolbar, SW_SHOW);
+    ShowWindow(app->ribbonTabs, SW_SHOW);
+    ShowWindow(app->formatBar, SW_SHOW);
 
     SendMessageW(app->toolbar, TB_SETINDENT,
                  app->useBrandColors ? app_scale(app->mainWindow, 48) : 0,
@@ -1369,6 +1498,10 @@ void app_update_command_ui(AppState *app)
         set_menu_enabled(menu, IDM_REVIEW_PREVIOUS_COMMENT, hasComments);
         set_menu_enabled(menu, IDM_REVIEW_NEXT_COMMENT, hasComments);
         set_menu_enabled(menu, IDM_REVIEW_DELETE_COMMENT, hasComments);
+        set_menu_enabled(menu, IDM_REVIEW_DOCUMENT_CHAT,
+                         app->history != NULL);
+        set_menu_enabled(menu, IDM_REVIEW_VERSION_HISTORY,
+                         history_version_count(app) > 0);
         set_menu_enabled(menu, IDM_LIVE_START_HOST,
                          liveRole == LIVE_ROLE_NONE && !liveWorker);
         set_menu_enabled(menu, IDM_LIVE_JOIN_SESSION,
@@ -1482,6 +1615,69 @@ static void handle_size_combo(AppState *app)
         MessageBeep(MB_ICONWARNING);
         format_sync_controls(app);
     }
+}
+
+static BOOL link_has_allowed_scheme(const WCHAR *address)
+{
+    size_t length;
+
+    if (address == NULL) {
+        return FALSE;
+    }
+    while (iswspace(*address)) {
+        ++address;
+    }
+    length = wcslen(address);
+    return (length >= 7 &&
+            CompareStringOrdinal(address, 7, L"http://", 7, TRUE) ==
+                CSTR_EQUAL) ||
+           (length >= 8 &&
+            CompareStringOrdinal(address, 8, L"https://", 8, TRUE) ==
+                CSTR_EQUAL) ||
+           (length >= 7 &&
+            CompareStringOrdinal(address, 7, L"mailto:", 7, TRUE) ==
+                CSTR_EQUAL);
+}
+
+static BOOL handle_editor_link(AppState *app, const ENLINK *link)
+{
+    TEXTRANGEW range;
+    WCHAR *address;
+    LONG length;
+    HINSTANCE opened;
+
+    if (app == NULL || link == NULL || link->msg != WM_LBUTTONUP ||
+        link->chrg.cpMin < 0 || link->chrg.cpMax <= link->chrg.cpMin) {
+        return FALSE;
+    }
+    length = link->chrg.cpMax - link->chrg.cpMin;
+    if (length > 4096) {
+        MessageBeep(MB_ICONWARNING);
+        return TRUE;
+    }
+    address = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                        ((SIZE_T)length + 1) * sizeof(*address));
+    if (address == NULL) {
+        return TRUE;
+    }
+    range.chrg = link->chrg;
+    range.lpstrText = address;
+    SendMessageW(app->editor, EM_GETTEXTRANGE, 0, (LPARAM)&range);
+    if (!link_has_allowed_scheme(address)) {
+        app_set_status_message(
+            app, L"Only http, https, and mailto links can be opened.");
+        MessageBeep(MB_ICONWARNING);
+        HeapFree(GetProcessHeap(), 0, address);
+        return TRUE;
+    }
+    opened = ShellExecuteW(app->mainWindow, L"open", address, NULL, NULL,
+                           SW_SHOWNORMAL);
+    if ((INT_PTR)opened <= 32) {
+        app_set_status_message(app, L"Windows could not open that link.");
+        MessageBeep(MB_ICONWARNING);
+    }
+    HeapFree(GetProcessHeap(), 0, address);
+    return TRUE;
 }
 
 static void handle_command(AppState *app, UINT command)
@@ -1638,9 +1834,6 @@ static void handle_command(AppState *app, UINT command)
     case IDM_STYLE_TITLE:
         format_apply_style(app, WORDCRAFT_STYLE_TITLE);
         break;
-    case IDM_INSERT_DATETIME:
-        dialogs_insert_datetime(app);
-        break;
     case IDM_VIEW_WORD_WRAP:
         format_set_word_wrap(app, !app->wordWrap);
         break;
@@ -1678,6 +1871,7 @@ static void handle_command(AppState *app, UINT command)
     case IDM_TOOLS_AUTOCOMPLETE:
         assist_set_auto_complete(app, !app->autoCompleteEnabled);
         break;
+    case IDM_INSERT_COMMENT:
     case IDM_REVIEW_ADD_COMMENT:
         if (!ribbon_get_comment_text(app, commentText,
                                      ARRAYSIZE(commentText)) ||
@@ -1706,6 +1900,12 @@ static void handle_command(AppState *app, UINT command)
     case IDM_REVIEW_DELETE_COMMENT:
         comments_delete_active(app);
         break;
+    case IDM_REVIEW_DOCUMENT_CHAT:
+        history_show_chat(app);
+        break;
+    case IDM_REVIEW_VERSION_HISTORY:
+        history_show_versions(app);
+        break;
     case IDM_REVIEW_LIVE_SHARE:
         live_share_show_dialog(app);
         break;
@@ -1728,6 +1928,15 @@ static void handle_command(AppState *app, UINT command)
         dialogs_show_about(app);
         break;
     default:
+        if (command >= IDM_INSERT_DATETIME &&
+            command <= IDM_INSERT_ESIGNATURE_FIELDS &&
+            !insert_execute_command(app, command)) {
+            app_set_status_message(
+                app,
+                L"This Insert command needs document-model support that "
+                L"is not available yet.");
+            MessageBeep(MB_ICONINFORMATION);
+        }
         break;
     }
     app_update_command_ui(app);
@@ -1820,6 +2029,14 @@ LRESULT CALLBACK main_window_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
         if ((UINT)wParam >= WCQ_LIVE_ROLE &&
             (UINT)wParam <= WCQ_LIVE_DOCUMENT_PENDING) {
             return live_share_query_state(app, (UINT)wParam);
+        }
+        if ((UINT)wParam >= WCQ_CHAT_COUNT &&
+            (UINT)wParam <= WCQ_VERSION_DIALOG_VISIBLE) {
+            return history_query_state(app, (UINT)wParam, lParam);
+        }
+        if ((UINT)wParam >= WCQ_INSERT_GROUP_COUNT &&
+            (UINT)wParam <= WCQ_DESIGN_EFFECT) {
+            return ribbon_query_state(app, (UINT)wParam, lParam);
         }
         if (app->paginationDirty || app->pageCount < 1) {
             pageview_paginate(app);
@@ -1914,6 +2131,10 @@ LRESULT CALLBACK main_window_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM
         if (!comments_initialize(app)) {
             goto startup_failed;
         }
+        startup_splash_set_status(app, L"Preparing chat and version history...");
+        if (!history_initialize(app)) {
+            goto startup_failed;
+        }
         startup_splash_set_status(app, L"Creating your document...");
         if (!document_new(app, FALSE)) {
             goto startup_failed;
@@ -1936,6 +2157,7 @@ startup_failed: {
         DWORD startupError = GetLastError();
 
         live_share_shutdown(app);
+        history_shutdown(app);
         comments_shutdown(app);
         text_engine_shutdown(app);
         ribbon_free(app);
@@ -2052,6 +2274,11 @@ startup_failed: {
             }
         }
         if (((NMHDR *)lParam)->hwndFrom == app->editor &&
+            ((NMHDR *)lParam)->code == EN_LINK &&
+            handle_editor_link(app, (const ENLINK *)lParam)) {
+            return 0;
+        }
+        if (((NMHDR *)lParam)->hwndFrom == app->editor &&
             ((NMHDR *)lParam)->code == EN_SELCHANGE) {
             if (!app->loading) {
                 ribbon_set_active_style(app, -1);
@@ -2093,6 +2320,8 @@ startup_failed: {
                 assist_handle_timer(app, (UINT_PTR)wParam);
             } else if (wParam == LIVE_SHARE_TIMER_ID) {
                 live_share_handle_timer(app, (UINT_PTR)wParam);
+            } else if (wParam == HISTORY_TIMER_ID) {
+                history_handle_timer(app, (UINT_PTR)wParam);
             }
         }
         return 0;
@@ -2116,6 +2345,7 @@ startup_failed: {
             if (app != NULL) {
                 live_share_shutdown(app);
                 assist_request_stop(app);
+                history_shutdown(app);
                 comments_shutdown(app);
                 text_engine_shutdown(app);
                 ribbon_free(app);
@@ -2126,6 +2356,7 @@ startup_failed: {
     case WM_DESTROY:
         live_share_shutdown(app);
         assist_request_stop(app);
+        history_shutdown(app);
         PostQuitMessage(0);
         return 0;
     default:
@@ -2364,6 +2595,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previousInstance,
 
     live_share_shutdown(app);
     assist_shutdown(app);
+    history_shutdown(app);
     comments_shutdown(app);
     text_engine_shutdown(app);
     ribbon_free(app);

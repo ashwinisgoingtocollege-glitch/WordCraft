@@ -11,6 +11,84 @@ static const IID wordcraftFormatIidTextDocument = {
     {0x80, 0x98, 0x00, 0xAA, 0x00, 0x47, 0xBE, 0x5D}
 };
 
+/*
+ * The first record intentionally reproduces WordCraft's pre-Design style
+ * definitions.  The remaining records use fonts that ship with common
+ * Windows installations and vary the preview traits exposed by the ribbon.
+ */
+static const WordcraftDesignStyleSetInfo wordcraftDesignStyleSets[] = {
+    {L"Office", L"Times New Roman", L"Times New Roman",
+     RGB(37, 76, 132), 520, 320, 280, TRUE, FALSE, FALSE, FALSE, FALSE},
+    {L"Basic (Elegant)", L"Garamond", L"Book Antiqua",
+     RGB(112, 86, 63), 540, 320, 280, FALSE, FALSE, FALSE, FALSE, FALSE},
+    {L"Basic (Simple)", L"Arial", L"Arial",
+     RGB(64, 94, 124), 500, 320, 280, FALSE, TRUE, FALSE, FALSE, FALSE},
+    {L"Basic (Stylish)", L"Trebuchet MS", L"Calibri",
+     RGB(93, 76, 138), 540, 340, 280, FALSE, FALSE, TRUE, FALSE, FALSE},
+    {L"Centered", L"Cambria", L"Calibri",
+     RGB(47, 94, 124), 560, 340, 280, TRUE, FALSE, FALSE, FALSE, FALSE},
+    {L"Casual", L"Comic Sans MS", L"Calibri",
+     RGB(68, 130, 111), 520, 320, 280, FALSE, FALSE, FALSE, FALSE, FALSE},
+    {L"Compact", L"Arial", L"Arial",
+     RGB(70, 88, 106), 480, 300, 260, FALSE, TRUE, FALSE, FALSE, FALSE},
+    {L"Lines (Distinctive)", L"Century Gothic", L"Calibri",
+     RGB(39, 104, 145), 540, 340, 280, FALSE, FALSE, TRUE, TRUE, FALSE},
+    {L"Lines (Elegant)", L"Garamond", L"Georgia",
+     RGB(132, 91, 66), 540, 320, 280, FALSE, FALSE, FALSE, TRUE, FALSE},
+    {L"Lines (Simple)", L"Arial", L"Calibri",
+     RGB(70, 112, 146), 500, 320, 270, FALSE, TRUE, FALSE, TRUE, FALSE},
+    {L"Modern", L"Aptos Display", L"Aptos",
+     RGB(0, 112, 173), 560, 340, 280, FALSE, FALSE, TRUE, FALSE, FALSE},
+    {L"Shaded", L"Cambria", L"Calibri",
+     RGB(79, 102, 126), 520, 320, 280, FALSE, FALSE, FALSE, FALSE, TRUE},
+    {L"Classic", L"Times New Roman", L"Times New Roman",
+     RGB(95, 76, 61), 500, 320, 280, TRUE, FALSE, FALSE, FALSE, FALSE},
+    {L"Distinctive", L"Century Gothic", L"Verdana",
+     RGB(34, 112, 147), 560, 360, 300, FALSE, FALSE, TRUE, FALSE, FALSE},
+    {L"Elegant", L"Palatino Linotype", L"Book Antiqua",
+     RGB(116, 83, 78), 560, 320, 280, TRUE, FALSE, FALSE, FALSE, FALSE},
+    {L"Formal", L"Cambria", L"Times New Roman",
+     RGB(54, 76, 96), 520, 320, 280, TRUE, FALSE, TRUE, TRUE, FALSE},
+    {L"Manuscript", L"Courier New", L"Courier New",
+     RGB(92, 82, 70), 480, 300, 260, FALSE, TRUE, FALSE, FALSE, FALSE},
+    {L"Traditional", L"Georgia", L"Georgia",
+     RGB(104, 75, 55), 520, 320, 280, TRUE, FALSE, FALSE, TRUE, FALSE},
+    {L"Word 2010", L"Cambria", L"Calibri",
+     RGB(31, 73, 125), 520, 320, 280, FALSE, FALSE, FALSE, FALSE, FALSE}
+};
+
+_Static_assert(ARRAYSIZE(wordcraftDesignStyleSets) ==
+                   DESIGN_STYLE_SET_COUNT,
+               "Design style-set metadata must remain complete");
+
+BOOL format_get_design_style_set_info(
+    int styleSet, WordcraftDesignStyleSetInfo *info)
+{
+    if (info == NULL || styleSet < 0 ||
+        styleSet >= DESIGN_STYLE_SET_COUNT) {
+        return FALSE;
+    }
+    *info = wordcraftDesignStyleSets[styleSet];
+    return TRUE;
+}
+
+void format_reset_document_design(AppState *app)
+{
+    if (app == NULL) {
+        return;
+    }
+    app->designStyleSet = DESIGN_STYLE_SET_OFFICE;
+    app->designColorScheme = DESIGN_COLOR_SCHEME_OFFICE;
+    app->designFontScheme = DESIGN_FONT_SCHEME_OFFICE;
+    /*
+     * "Open" is WordCraft's Office paragraph-spacing baseline: 6 pt after
+     * and 1.1-line spacing.  "None" is the explicit no-paragraph-space
+     * choice, so it is not the reset value.
+     */
+    app->designParagraphSpacing = DESIGN_PARAGRAPH_SPACING_OPEN;
+    app->designEffect = DESIGN_EFFECT_OFFICE;
+}
+
 static ITextDocument *get_format_document(HWND editor)
 {
     IRichEditOle *richEditOle = NULL;
@@ -111,6 +189,7 @@ void format_initialize_document(AppState *app)
     CHARFORMAT2W character;
     PARAFORMAT2 paragraph;
 
+    format_reset_document_design(app);
     ZeroMemory(&character, sizeof(character));
     character.cbSize = sizeof(character);
     character.dwMask = CFM_FACE | CFM_SIZE | CFM_COLOR | CFM_CHARSET;
@@ -556,10 +635,169 @@ void format_cycle_line_spacing(AppState *app)
     SetFocus(app->editor);
 }
 
-static void format_build_style(WordcraftStyle style,
-                               CHARFORMAT2W *character,
-                               PARAFORMAT2 *paragraph)
+static COLORREF format_blend_color(COLORREF first, COLORREF second,
+                                   unsigned secondPercent)
 {
+    unsigned firstPercent = 100u - min(secondPercent, 100u);
+
+    return RGB(
+        (GetRValue(first) * firstPercent +
+         GetRValue(second) * secondPercent) / 100u,
+        (GetGValue(first) * firstPercent +
+         GetGValue(second) * secondPercent) / 100u,
+        (GetBValue(first) * firstPercent +
+         GetBValue(second) * secondPercent) / 100u);
+}
+
+static COLORREF format_design_accent(
+    int colorScheme, const WordcraftDesignStyleSetInfo *info)
+{
+    static const COLORREF accents[DESIGN_COLOR_SCHEME_COUNT] = {
+        RGB(46, 116, 181), RGB(38, 126, 191), RGB(63, 139, 83),
+        RGB(224, 112, 42), RGB(192, 57, 62), RGB(128, 83, 167)
+    };
+
+    if (info == NULL) {
+        return RGB(37, 76, 132);
+    }
+    /*
+     * Office means "use this style set's native accent".  The explicit
+     * color families replace it, matching the Design ribbon swatches.
+     */
+    if (colorScheme == DESIGN_COLOR_SCHEME_OFFICE) {
+        return info->accent;
+    }
+    if (colorScheme < 0 || colorScheme >= DESIGN_COLOR_SCHEME_COUNT) {
+        return info->accent;
+    }
+    return accents[colorScheme];
+}
+
+static void format_design_fonts(
+    int fontScheme, const WordcraftDesignStyleSetInfo *info,
+    const WCHAR **headingFont, const WCHAR **bodyFont)
+{
+    static const WCHAR *const headingFonts[DESIGN_FONT_SCHEME_COUNT] = {
+        NULL, L"Cambria", L"Aptos Display", L"Trebuchet MS",
+        L"Garamond", L"Courier New"
+    };
+    static const WCHAR *const bodyFonts[DESIGN_FONT_SCHEME_COUNT] = {
+        NULL, L"Georgia", L"Aptos", L"Calibri",
+        L"Book Antiqua", L"Courier New"
+    };
+
+    *headingFont =
+        info != NULL ? info->headingFont : WORDCRAFT_DEFAULT_FONT_FACE;
+    *bodyFont =
+        info != NULL ? info->bodyFont : WORDCRAFT_DEFAULT_FONT_FACE;
+    if (fontScheme > DESIGN_FONT_SCHEME_OFFICE &&
+        fontScheme < DESIGN_FONT_SCHEME_COUNT) {
+        *headingFont = headingFonts[fontScheme];
+        *bodyFont = bodyFonts[fontScheme];
+    }
+}
+
+static void format_design_base_spacing(
+    int paragraphSpacing, BOOL compactStyle, LONG *spaceAfter,
+    BYTE *lineRule, LONG *lineSpacing)
+{
+    switch (paragraphSpacing) {
+    case DESIGN_PARAGRAPH_SPACING_NONE:
+        *spaceAfter = 0;
+        *lineRule = 0;
+        *lineSpacing = 0;
+        break;
+    case DESIGN_PARAGRAPH_SPACING_COMPACT:
+        *spaceAfter = 60;
+        *lineRule = 0;
+        *lineSpacing = 0;
+        break;
+    case DESIGN_PARAGRAPH_SPACING_TIGHT:
+        *spaceAfter = 80;
+        *lineRule = 5;
+        *lineSpacing = 21;
+        break;
+    case DESIGN_PARAGRAPH_SPACING_RELAXED:
+        *spaceAfter = 200;
+        *lineRule = 5;
+        *lineSpacing = 24;
+        break;
+    case DESIGN_PARAGRAPH_SPACING_DOUBLE:
+        *spaceAfter = 120;
+        *lineRule = 2;
+        *lineSpacing = 0;
+        break;
+    case DESIGN_PARAGRAPH_SPACING_OPEN:
+    default:
+        *spaceAfter = WORDCRAFT_DEFAULT_PARAGRAPH_SPACE_AFTER_TWIPS;
+        *lineRule = WORDCRAFT_DEFAULT_LINE_SPACING_RULE;
+        *lineSpacing = WORDCRAFT_DEFAULT_LINE_SPACING;
+        break;
+    }
+    if (compactStyle &&
+        paragraphSpacing == DESIGN_PARAGRAPH_SPACING_OPEN) {
+        *spaceAfter = 60;
+        *lineRule = 0;
+        *lineSpacing = 0;
+    }
+}
+
+static LONG format_scale_style_spacing(
+    LONG openValue, int paragraphSpacing, BOOL compactStyle)
+{
+    unsigned percent;
+
+    switch (paragraphSpacing) {
+    case DESIGN_PARAGRAPH_SPACING_NONE:
+        percent = 0;
+        break;
+    case DESIGN_PARAGRAPH_SPACING_COMPACT:
+        percent = 50;
+        break;
+    case DESIGN_PARAGRAPH_SPACING_TIGHT:
+        percent = 75;
+        break;
+    case DESIGN_PARAGRAPH_SPACING_RELAXED:
+        percent = 140;
+        break;
+    case DESIGN_PARAGRAPH_SPACING_DOUBLE:
+        percent = 165;
+        break;
+    case DESIGN_PARAGRAPH_SPACING_OPEN:
+    default:
+        percent = compactStyle ? 55 : 100;
+        break;
+    }
+    return MulDiv(openValue, (int)percent, 100);
+}
+
+static void format_build_style_for_design(
+    WordcraftStyle style, int styleSet, int colorScheme,
+    int fontScheme, int paragraphSpacing,
+    CHARFORMAT2W *character, PARAFORMAT2 *paragraph)
+{
+    WordcraftDesignStyleSetInfo info;
+    const WCHAR *headingFont;
+    const WCHAR *bodyFont;
+    COLORREF accent;
+
+    if (!format_get_design_style_set_info(styleSet, &info)) {
+        info = wordcraftDesignStyleSets[DESIGN_STYLE_SET_OFFICE];
+        styleSet = DESIGN_STYLE_SET_OFFICE;
+    }
+    if (colorScheme < 0 || colorScheme >= DESIGN_COLOR_SCHEME_COUNT) {
+        colorScheme = DESIGN_COLOR_SCHEME_OFFICE;
+    }
+    if (fontScheme < 0 || fontScheme >= DESIGN_FONT_SCHEME_COUNT) {
+        fontScheme = DESIGN_FONT_SCHEME_OFFICE;
+    }
+    if (paragraphSpacing < 0 ||
+        paragraphSpacing >= DESIGN_PARAGRAPH_SPACING_COUNT) {
+        paragraphSpacing = DESIGN_PARAGRAPH_SPACING_OPEN;
+    }
+    format_design_fonts(fontScheme, &info, &headingFont, &bodyFont);
+    accent = format_design_accent(colorScheme, &info);
+
     ZeroMemory(character, sizeof(*character));
     character->cbSize = sizeof(*character);
     character->dwMask = CFM_FACE | CFM_SIZE | CFM_COLOR | CFM_CHARSET |
@@ -572,8 +810,7 @@ static void format_build_style(WordcraftStyle style,
     character->crTextColor = RGB(0, 0, 0);
     character->bCharSet = DEFAULT_CHARSET;
     StringCchCopyW(character->szFaceName,
-                   ARRAYSIZE(character->szFaceName),
-                   WORDCRAFT_DEFAULT_FONT_FACE);
+                   ARRAYSIZE(character->szFaceName), bodyFont);
 
     ZeroMemory(paragraph, sizeof(*paragraph));
     paragraph->cbSize = sizeof(*paragraph);
@@ -588,9 +825,10 @@ static void format_build_style(WordcraftStyle style,
     paragraph->dxRightIndent = 0;
     paragraph->dxOffset = 0;
     paragraph->dySpaceBefore = 0;
-    paragraph->dySpaceAfter = WORDCRAFT_DEFAULT_PARAGRAPH_SPACE_AFTER_TWIPS;
-    paragraph->bLineSpacingRule = WORDCRAFT_DEFAULT_LINE_SPACING_RULE;
-    paragraph->dyLineSpacing = WORDCRAFT_DEFAULT_LINE_SPACING;
+    format_design_base_spacing(
+        paragraphSpacing, info.compactSpacing,
+        &paragraph->dySpaceAfter, &paragraph->bLineSpacingRule,
+        &paragraph->dyLineSpacing);
 
     switch (style) {
     case WORDCRAFT_STYLE_NO_SPACING:
@@ -599,30 +837,70 @@ static void format_build_style(WordcraftStyle style,
         paragraph->dyLineSpacing = 0;
         break;
     case WORDCRAFT_STYLE_HEADING_1:
-        character->yHeight = 320;
+        StringCchCopyW(character->szFaceName,
+                       ARRAYSIZE(character->szFaceName), headingFont);
+        character->yHeight = info.heading1Size;
         character->dwEffects |= CFE_BOLD;
-        character->crTextColor = RGB(37, 76, 132);
-        paragraph->dySpaceBefore = 240;
-        paragraph->dySpaceAfter = 60;
+        character->crTextColor = accent;
+        paragraph->dySpaceBefore = format_scale_style_spacing(
+            240, paragraphSpacing, info.compactSpacing);
+        paragraph->dySpaceAfter = format_scale_style_spacing(
+            60, paragraphSpacing, info.compactSpacing);
         break;
     case WORDCRAFT_STYLE_HEADING_2:
-        character->yHeight = 280;
+        StringCchCopyW(character->szFaceName,
+                       ARRAYSIZE(character->szFaceName), headingFont);
+        character->yHeight = info.heading2Size;
         character->dwEffects |= CFE_BOLD;
-        character->crTextColor = RGB(55, 96, 146);
-        paragraph->dySpaceBefore = 200;
-        paragraph->dySpaceAfter = 40;
+        character->crTextColor =
+            styleSet == DESIGN_STYLE_SET_OFFICE &&
+                    colorScheme == DESIGN_COLOR_SCHEME_OFFICE
+                ? RGB(55, 96, 146)
+                : format_blend_color(accent, RGB(255, 255, 255), 14);
+        paragraph->dySpaceBefore = format_scale_style_spacing(
+            200, paragraphSpacing, info.compactSpacing);
+        paragraph->dySpaceAfter = format_scale_style_spacing(
+            40, paragraphSpacing, info.compactSpacing);
         break;
     case WORDCRAFT_STYLE_TITLE:
-        character->yHeight = 520;
+        StringCchCopyW(character->szFaceName,
+                       ARRAYSIZE(character->szFaceName), headingFont);
+        character->yHeight = info.titleSize;
         character->dwEffects |= CFE_BOLD;
-        character->crTextColor = RGB(31, 56, 92);
-        paragraph->wAlignment = PFA_CENTER;
-        paragraph->dySpaceAfter = 300;
+        character->crTextColor =
+            styleSet == DESIGN_STYLE_SET_OFFICE &&
+                    colorScheme == DESIGN_COLOR_SCHEME_OFFICE
+                ? RGB(31, 56, 92)
+                : format_blend_color(accent, RGB(0, 0, 0), 28);
+        paragraph->wAlignment =
+            info.centerTitle ? PFA_CENTER : PFA_LEFT;
+        paragraph->dySpaceAfter = format_scale_style_spacing(
+            300, paragraphSpacing, info.compactSpacing);
         break;
     case WORDCRAFT_STYLE_NORMAL:
     default:
         break;
     }
+}
+
+static void format_build_style(const AppState *app, WordcraftStyle style,
+                               CHARFORMAT2W *character,
+                               PARAFORMAT2 *paragraph)
+{
+    int styleSet = DESIGN_STYLE_SET_OFFICE;
+    int colorScheme = DESIGN_COLOR_SCHEME_OFFICE;
+    int fontScheme = DESIGN_FONT_SCHEME_OFFICE;
+    int paragraphSpacing = DESIGN_PARAGRAPH_SPACING_OPEN;
+
+    if (app != NULL) {
+        styleSet = app->designStyleSet;
+        colorScheme = app->designColorScheme;
+        fontScheme = app->designFontScheme;
+        paragraphSpacing = app->designParagraphSpacing;
+    }
+    format_build_style_for_design(
+        style, styleSet, colorScheme, fontScheme, paragraphSpacing,
+        character, paragraph);
 }
 
 BOOL format_apply_style(AppState *app, WordcraftStyle style)
@@ -644,7 +922,7 @@ BOOL format_apply_style(AppState *app, WordcraftStyle style)
         style < 0 || style >= WORDCRAFT_STYLE_COUNT) {
         return FALSE;
     }
-    format_build_style(style, &character, &paragraph);
+    format_build_style(app, style, &character, &paragraph);
     SendMessageW(app->editor, EM_EXGETSEL, 0, (LPARAM)&original);
     paragraphs = original;
     document = get_format_document(app->editor);
@@ -709,6 +987,303 @@ BOOL format_apply_style(AppState *app, WordcraftStyle style)
                                 ? (int)style
                                 : -1);
     return changedCharacter && changedParagraph;
+}
+
+static BOOL format_character_matches_style(
+    const CHARFORMAT2W *actual, const CHARFORMAT2W *style)
+{
+    const DWORD requiredMask =
+        CFM_FACE | CFM_SIZE | CFM_COLOR | CFM_BOLD | CFM_ITALIC |
+        CFM_UNDERLINE | CFM_STRIKEOUT | CFM_SUBSCRIPT | CFM_OFFSET |
+        CFM_BACKCOLOR;
+    const DWORD comparedEffects =
+        CFE_BOLD | CFE_ITALIC | CFE_UNDERLINE | CFE_STRIKEOUT |
+        CFE_SUBSCRIPT | CFE_SUPERSCRIPT | CFE_AUTOCOLOR |
+        CFE_AUTOBACKCOLOR;
+
+    if (actual == NULL || style == NULL ||
+        (actual->dwMask & requiredMask) != requiredMask ||
+        lstrcmpiW(actual->szFaceName, style->szFaceName) != 0 ||
+        actual->yHeight != style->yHeight ||
+        actual->yOffset != style->yOffset ||
+        actual->crTextColor != style->crTextColor ||
+        (actual->dwEffects & comparedEffects) !=
+            (style->dwEffects & comparedEffects)) {
+        return FALSE;
+    }
+    /*
+     * An explicit highlight is direct formatting even when it happens to
+     * use the editor's page color.  WordCraft styles always use automatic
+     * background color.
+     */
+    if ((style->dwEffects & CFE_AUTOBACKCOLOR) == 0 &&
+        actual->crBackColor != style->crBackColor) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL format_paragraph_matches_style(
+    const PARAFORMAT2 *actual, const PARAFORMAT2 *style)
+{
+    const DWORD requiredMask =
+        PFM_ALIGNMENT | PFM_NUMBERING | PFM_STARTINDENT |
+        PFM_RIGHTINDENT | PFM_OFFSET | PFM_SPACEBEFORE |
+        PFM_SPACEAFTER | PFM_LINESPACING;
+
+    if (actual == NULL || style == NULL ||
+        (actual->dwMask & requiredMask) != requiredMask ||
+        actual->wAlignment != style->wAlignment ||
+        actual->wNumbering != style->wNumbering ||
+        actual->dxStartIndent != style->dxStartIndent ||
+        actual->dxRightIndent != style->dxRightIndent ||
+        actual->dxOffset != style->dxOffset ||
+        actual->dySpaceBefore != style->dySpaceBefore ||
+        actual->dySpaceAfter != style->dySpaceAfter ||
+        actual->bLineSpacingRule != style->bLineSpacingRule) {
+        return FALSE;
+    }
+    if (style->wNumbering != 0 &&
+        (actual->wNumberingStyle != style->wNumberingStyle ||
+         actual->wNumberingStart != style->wNumberingStart ||
+         actual->wNumberingTab != style->wNumberingTab)) {
+        return FALSE;
+    }
+    if (style->bLineSpacingRule == 5 &&
+        actual->dyLineSpacing != style->dyLineSpacing) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL format_style_definitions_equal(
+    const CHARFORMAT2W *firstCharacter,
+    const PARAFORMAT2 *firstParagraph,
+    const CHARFORMAT2W *secondCharacter,
+    const PARAFORMAT2 *secondParagraph)
+{
+    return format_character_matches_style(
+               firstCharacter, secondCharacter) &&
+           format_paragraph_matches_style(
+               firstParagraph, secondParagraph);
+}
+
+static BOOL format_get_paragraph_range(
+    ITextDocument *document, LONG position, CHARRANGE *paragraph)
+{
+    ITextRange *range = NULL;
+    long ignored = 0;
+    long start = 0;
+    long end = 0;
+    BOOL success = FALSE;
+
+    if (document == NULL || paragraph == NULL || position < 0 ||
+        FAILED(ITextDocument_Range(
+            document, position, position, &range)) ||
+        range == NULL) {
+        return FALSE;
+    }
+    if (SUCCEEDED(ITextRange_Expand(range, tomParagraph, &ignored)) &&
+        SUCCEEDED(ITextRange_GetStart(range, &start)) &&
+        SUCCEEDED(ITextRange_GetEnd(range, &end)) &&
+        start >= 0 && end >= position) {
+        paragraph->cpMin = start;
+        paragraph->cpMax = end;
+        success = TRUE;
+    }
+    ITextRange_Release(range);
+    return success;
+}
+
+BOOL format_apply_document_design(
+    AppState *app, int styleSet, int colorScheme, int fontScheme,
+    int paragraphSpacing)
+{
+    CHARFORMAT2W oldCharacters[WORDCRAFT_STYLE_COUNT];
+    CHARFORMAT2W newCharacters[WORDCRAFT_STYLE_COUNT];
+    PARAFORMAT2 oldParagraphs[WORDCRAFT_STYLE_COUNT];
+    PARAFORMAT2 newParagraphs[WORDCRAFT_STYLE_COUNT];
+    CHARFORMAT2W actualCharacter;
+    PARAFORMAT2 actualParagraph;
+    CHARRANGE originalSelection;
+    CHARRANGE paragraphRange;
+    ITextDocument *document = NULL;
+    ITextSelection *tomSelection = NULL;
+    HWND originalFocus;
+    POINT scrollPosition;
+    long selectionFlags = 0;
+    LONG textLength;
+    LONG position;
+    LRESULT eventMask;
+    BOOL haveSelectionFlags = FALSE;
+    BOOL haveScrollPosition;
+    BOOL wasLoading;
+    BOOL contentChanged = FALSE;
+    BOOL defaultChanged;
+    BOOL stateChanged;
+    int style;
+
+    if (app == NULL || app->editor == NULL ||
+        styleSet < 0 || styleSet >= DESIGN_STYLE_SET_COUNT ||
+        colorScheme < 0 ||
+            colorScheme >= DESIGN_COLOR_SCHEME_COUNT ||
+        fontScheme < 0 || fontScheme >= DESIGN_FONT_SCHEME_COUNT ||
+        paragraphSpacing < 0 ||
+            paragraphSpacing >= DESIGN_PARAGRAPH_SPACING_COUNT) {
+        return FALSE;
+    }
+
+    stateChanged =
+        app->designStyleSet != styleSet ||
+        app->designColorScheme != colorScheme ||
+        app->designFontScheme != fontScheme ||
+        app->designParagraphSpacing != paragraphSpacing;
+    if (!stateChanged) {
+        return TRUE;
+    }
+
+
+    for (style = 0; style < WORDCRAFT_STYLE_COUNT; ++style) {
+        format_build_style_for_design(
+            (WordcraftStyle)style, app->designStyleSet,
+            app->designColorScheme, app->designFontScheme,
+            app->designParagraphSpacing, &oldCharacters[style],
+            &oldParagraphs[style]);
+        format_build_style_for_design(
+            (WordcraftStyle)style, styleSet, colorScheme, fontScheme,
+            paragraphSpacing, &newCharacters[style],
+            &newParagraphs[style]);
+    }
+    defaultChanged = !format_character_matches_style(
+        &oldCharacters[WORDCRAFT_STYLE_NORMAL],
+        &newCharacters[WORDCRAFT_STYLE_NORMAL]);
+
+    document = get_format_document(app->editor);
+    if (document == NULL || !begin_format_collection(document)) {
+        if (document != NULL) {
+            ITextDocument_Release(document);
+        }
+        return FALSE;
+    }
+    originalFocus = GetFocus();
+    SendMessageW(app->editor, EM_EXGETSEL, 0,
+                 (LPARAM)&originalSelection);
+    haveScrollPosition = (BOOL)SendMessageW(
+        app->editor, EM_GETSCROLLPOS, 0, (LPARAM)&scrollPosition);
+    if (SUCCEEDED(ITextDocument_GetSelection(
+            document, &tomSelection)) &&
+        tomSelection != NULL &&
+        SUCCEEDED(ITextSelection_GetFlags(
+            tomSelection, &selectionFlags))) {
+        haveSelectionFlags = TRUE;
+    }
+
+    textLength = GetWindowTextLengthW(app->editor);
+    wasLoading = app->loading;
+    app->loading = TRUE;
+    eventMask = SendMessageW(app->editor, EM_GETEVENTMASK, 0, 0);
+    SendMessageW(app->editor, EM_SETEVENTMASK, 0,
+                 eventMask & ~(LRESULT)ENM_SELCHANGE);
+    SendMessageW(app->editor, EM_STOPGROUPTYPING, 0, 0);
+    SendMessageW(app->editor, WM_SETREDRAW, FALSE, 0);
+
+    position = 0;
+    /*
+     * Include the story end so an empty document, or the final empty
+     * paragraph after a trailing return, receives the new Normal paragraph
+     * defaults as well.
+     */
+    while (position <= textLength &&
+           format_get_paragraph_range(
+               document, position, &paragraphRange)) {
+        int matchedStyle = -1;
+
+        ZeroMemory(&actualCharacter, sizeof(actualCharacter));
+        actualCharacter.cbSize = sizeof(actualCharacter);
+        ZeroMemory(&actualParagraph, sizeof(actualParagraph));
+        actualParagraph.cbSize = sizeof(actualParagraph);
+        SendMessageW(app->editor, EM_EXSETSEL, 0,
+                     (LPARAM)&paragraphRange);
+        SendMessageW(app->editor, EM_GETCHARFORMAT, SCF_SELECTION,
+                     (LPARAM)&actualCharacter);
+        SendMessageW(app->editor, EM_GETPARAFORMAT, 0,
+                     (LPARAM)&actualParagraph);
+
+        for (style = 0; style < WORDCRAFT_STYLE_COUNT; ++style) {
+            if (format_character_matches_style(
+                    &actualCharacter, &oldCharacters[style]) &&
+                format_paragraph_matches_style(
+                    &actualParagraph, &oldParagraphs[style])) {
+                matchedStyle = style;
+                break;
+            }
+        }
+        if (matchedStyle >= 0 &&
+            !format_style_definitions_equal(
+                &oldCharacters[matchedStyle],
+                &oldParagraphs[matchedStyle],
+                &newCharacters[matchedStyle],
+                &newParagraphs[matchedStyle])) {
+            BOOL characterApplied = (BOOL)SendMessageW(
+                app->editor, EM_SETCHARFORMAT, SCF_SELECTION,
+                (LPARAM)&newCharacters[matchedStyle]);
+            BOOL paragraphApplied = (BOOL)SendMessageW(
+                app->editor, EM_SETPARAFORMAT, 0,
+                (LPARAM)&newParagraphs[matchedStyle]);
+            contentChanged =
+                contentChanged || characterApplied || paragraphApplied;
+        }
+        if (paragraphRange.cpMax <= position) {
+            break;
+        }
+        position = paragraphRange.cpMax;
+    }
+
+    app->designStyleSet = styleSet;
+    app->designColorScheme = colorScheme;
+    app->designFontScheme = fontScheme;
+    app->designParagraphSpacing = paragraphSpacing;
+    if (SendMessageW(app->editor, EM_SETCHARFORMAT, SCF_DEFAULT,
+                     (LPARAM)&newCharacters[WORDCRAFT_STYLE_NORMAL]) &&
+        defaultChanged) {
+        contentChanged = TRUE;
+    }
+
+    SendMessageW(app->editor, EM_EXSETSEL, 0,
+                 (LPARAM)&originalSelection);
+    if (haveSelectionFlags) {
+        ITextSelection_SetFlags(tomSelection, selectionFlags);
+    }
+    if (haveScrollPosition) {
+        SendMessageW(app->editor, EM_SETSCROLLPOS, 0,
+                     (LPARAM)&scrollPosition);
+    }
+    SendMessageW(app->editor, EM_SETEVENTMASK, 0, eventMask);
+    SendMessageW(app->editor, WM_SETREDRAW, TRUE, 0);
+    app->loading = wasLoading;
+    end_format_collection(document);
+    SendMessageW(app->editor, EM_STOPGROUPTYPING, 0, 0);
+
+    if (tomSelection != NULL) {
+        ITextSelection_Release(tomSelection);
+    }
+    ITextDocument_Release(document);
+    document = NULL;
+
+    if (contentChanged) {
+        app->richFormattingUsed = TRUE;
+        document_mark_modified(app, TRUE);
+        text_engine_note_layout_change(app);
+        pageview_mark_dirty(app);
+        ribbon_set_active_style(app, -1);
+        InvalidateRect(app->editor, NULL, TRUE);
+    }
+    format_sync_controls(app);
+    app_update_command_ui(app);
+    if (originalFocus != NULL && IsWindow(originalFocus)) {
+        SetFocus(originalFocus);
+    }
+    return TRUE;
 }
 
 void format_clear_formatting(AppState *app)

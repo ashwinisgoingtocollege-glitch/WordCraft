@@ -87,6 +87,7 @@ void printing_print_document(AppState *app)
     FORMATRANGE formatRange;
     LONG textLength;
     SIZE_T preciseTextLength = 0;
+    WCHAR *documentText = NULL;
     LONG nextCharacter = 0;
     LONG previousCharacter;
     int dpiX;
@@ -100,6 +101,7 @@ void printing_print_document(AppState *app)
     BOOL startedDocument = FALSE;
     BOOL printSucceeded = TRUE;
     BOOL firstPage = TRUE;
+    BOOL trailingForcedBreak = FALSE;
     DWORD error = ERROR_SUCCESS;
 
     ensure_default_printer_settings(app);
@@ -195,7 +197,8 @@ void printing_print_document(AppState *app)
         startedDocument = TRUE;
     }
 
-    if (!editor_get_text_length(app->editor, FALSE, &preciseTextLength, &error) ||
+    if (!editor_get_all_text(app->editor, FALSE, &documentText,
+                             &preciseTextLength, &error) ||
         preciseTextLength > 0x7FFFFFFEULL) {
         if (error == ERROR_SUCCESS) {
             error = ERROR_FILE_TOO_LARGE;
@@ -205,18 +208,45 @@ void printing_print_document(AppState *app)
     } else {
         textLength = (LONG)preciseTextLength;
     }
-    while (printSucceeded && (firstPage || nextCharacter < textLength)) {
+    while (printSucceeded &&
+           (firstPage || nextCharacter < textLength ||
+            trailingForcedBreak)) {
+        LONG forcedBreak = -1;
+        LONG scan;
+
         firstPage = FALSE;
         if (StartPage(dialog.hDC) <= 0) {
             error = GetLastError();
             printSucceeded = FALSE;
             break;
         }
+        if (trailingForcedBreak && nextCharacter >= textLength) {
+            trailingForcedBreak = FALSE;
+            if (EndPage(dialog.hDC) <= 0) {
+                error = GetLastError();
+                printSucceeded = FALSE;
+            }
+            continue;
+        }
         previousCharacter = nextCharacter;
+        for (scan = previousCharacter; scan < textLength; ++scan) {
+            if (documentText[scan] == L'\f') {
+                forcedBreak = scan;
+                break;
+            }
+        }
         formatRange.chrg.cpMin = nextCharacter;
-        formatRange.chrg.cpMax = -1;
+        formatRange.chrg.cpMax =
+            forcedBreak >= 0 ? forcedBreak + 1 : -1;
         nextCharacter = (LONG)SendMessageW(app->editor, EM_FORMATRANGE, TRUE,
                                            (LPARAM)&formatRange);
+        if (forcedBreak >= 0 &&
+            (nextCharacter >= forcedBreak ||
+             (nextCharacter <= previousCharacter &&
+              forcedBreak == previousCharacter))) {
+            nextCharacter = forcedBreak + 1;
+            trailingForcedBreak = nextCharacter == textLength;
+        }
         if (EndPage(dialog.hDC) <= 0) {
             error = GetLastError();
             printSucceeded = FALSE;
@@ -247,6 +277,9 @@ void printing_print_document(AppState *app)
         app_show_error(app->mainWindow, L"The document could not be printed.", error);
     } else {
         app_set_status_message(app, L"Document sent to printer");
+    }
+    if (documentText != NULL) {
+        HeapFree(GetProcessHeap(), 0, documentText);
     }
     release_print_dc(&dialog);
 }

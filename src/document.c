@@ -1,10 +1,28 @@
 #include "editor.h"
+#include "rendereditor.h"
 
 #include <limits.h>
 #include <string.h>
 
 #define DOCUMENT_LIVE_SNAPSHOT_LIMIT ((SIZE_T)16u * 1024u * 1024u)
+#define DOCUMENT_LIVE_ENVELOPE_SIZE 64u
+#define DOCUMENT_LIVE_RTF_WIRE_LIMIT \
+    (DOCUMENT_LIVE_SNAPSHOT_LIMIT - DOCUMENT_LIVE_ENVELOPE_SIZE)
 #define DOCUMENT_LIVE_RTF_MAX_DEPTH 256
+
+typedef enum DocumentHistoryMode {
+    DOCUMENT_HISTORY_KEEP = 0,
+    DOCUMENT_HISTORY_REPLACE,
+    DOCUMENT_HISTORY_MERGE,
+    DOCUMENT_HISTORY_RECONCILE,
+    DOCUMENT_HISTORY_CHAT_ACK
+} DocumentHistoryMode;
+
+typedef enum RtfSafetyMode {
+    RTF_SAFETY_STRUCTURE_ONLY = 0,
+    RTF_SAFETY_LIVE,
+    RTF_SAFETY_HISTORY
+} RtfSafetyMode;
 
 typedef struct FileStreamContext {
     HANDLE file;
@@ -171,11 +189,21 @@ static BOOL capture_rtf(HWND editor, MemoryStreamContext *output, DWORD *error)
 static BOOL restore_rtf(HWND editor, MemoryStreamContext *input)
 {
     EDITSTREAM stream;
+    DWORD pictureError = ERROR_SUCCESS;
+
+    if (!render_editor_begin_static_picture_stream(editor)) {
+        return FALSE;
+    }
     input->position = 0;
     ZeroMemory(&stream, sizeof(stream));
     stream.dwCookie = (DWORD_PTR)input;
     stream.pfnCallback = memory_read_callback;
     SendMessageW(editor, EM_STREAMIN, SF_RTF, (LPARAM)&stream);
+    if (!render_editor_end_static_picture_stream(
+            editor, &pictureError)) {
+        SetLastError(pictureError);
+        return FALSE;
+    }
     return stream.dwError == 0;
 }
 
@@ -433,6 +461,7 @@ static BOOL load_rtf_candidate(AppState *app, const WCHAR *path,
     HWND temporaryEditor;
     FileStreamContext fileContext;
     EDITSTREAM input;
+    DWORD pictureError = ERROR_SUCCESS;
     BOOL result = FALSE;
     BYTE header[5];
     DWORD headerBytes = 0;
@@ -475,14 +504,30 @@ static BOOL load_rtf_candidate(AppState *app, const WCHAR *path,
         CloseHandle(file);
         return FALSE;
     }
+    if (!render_editor_install_static_picture_callback(temporaryEditor)) {
+        *error = GetLastError();
+        DestroyWindow(temporaryEditor);
+        CloseHandle(file);
+        return FALSE;
+    }
     SendMessageW(temporaryEditor, EM_EXLIMITTEXT, 0, 0x7FFFFFFE);
     ZeroMemory(&fileContext, sizeof(fileContext));
     fileContext.file = file;
     ZeroMemory(&input, sizeof(input));
     input.dwCookie = (DWORD_PTR)&fileContext;
     input.pfnCallback = file_read_callback;
+    if (!render_editor_begin_static_picture_stream(temporaryEditor)) {
+        *error = GetLastError();
+        DestroyWindow(temporaryEditor);
+        CloseHandle(file);
+        return FALSE;
+    }
     SendMessageW(temporaryEditor, EM_STREAMIN, SF_RTF, (LPARAM)&input);
-    if (input.dwError != 0 || fileContext.error != ERROR_SUCCESS) {
+    if (!render_editor_end_static_picture_stream(
+            temporaryEditor, &pictureError)) {
+        *error = pictureError;
+    } else if (input.dwError != 0 ||
+               fileContext.error != ERROR_SUCCESS) {
         *error = fileContext.error != ERROR_SUCCESS ? fileContext.error : input.dwError;
     } else if (!capture_rtf(temporaryEditor, normalized, error)) {
         /* capture_rtf supplied the error */
@@ -560,26 +605,33 @@ static BOOL rtf_word_has_prefix(const BYTE *word, SIZE_T length,
 }
 
 /*
- * Live snapshots cross a trust boundary.  WordCraft currently shares text,
- * character/paragraph formatting, and its own inert comment destination; it
- * does not need RichEdit to instantiate OLE objects, fields, drawings,
- * pictures, linked files, embedded fonts, HTML, or opaque application data.
- * Reject those controls before the bytes reach the native RichEdit parser.
+ * Live snapshots cross a trust boundary. WordCraft shares text, formatting,
+ * and its own inert metadata, so live traffic rejects every embedded object.
+ * Local version snapshots additionally permit self-contained static picture
+ * groups, but still reject OLE objects, fields, drawings, links, embedded
+ * fonts, HTML, and opaque application data before RichEdit sees the bytes.
  */
-static BOOL rtf_live_word_is_unsafe(const BYTE *word, SIZE_T length)
+static BOOL rtf_safe_word_is_unsafe(const BYTE *word, SIZE_T length,
+                                    BOOL allowStaticPictures)
 {
     static const char *const exactWords[] = {
         "field", "datafield", "formfield",
-        "pict", "nonshppict", "listpicture", "nextgraphic",
+        "nextgraphic",
         "do", "private", "datastore", "themedata",
         "colorschememapping", "htmltag", "mhtmltag",
         "includetext", "includepicture", "import"
+    };
+    static const char *const pictureWords[] = {
+        "pict", "nonshppict", "listpicture"
     };
     SIZE_T index;
 
     if (rtf_word_has_prefix(word, length, "obj") ||
         rtf_word_has_prefix(word, length, "fld") ||
-        rtf_word_has_prefix(word, length, "shp") ||
+        (rtf_word_has_prefix(word, length, "shp") &&
+         !(allowStaticPictures &&
+           (rtf_word_equals(word, length, "shppict") ||
+            rtf_word_equals(word, length, "shprslt")))) ||
         rtf_word_has_prefix(word, length, "file") ||
         rtf_word_has_prefix(word, length, "fontemb") ||
         rtf_word_has_prefix(word, length, "fontfile") ||
@@ -591,11 +643,18 @@ static BOOL rtf_live_word_is_unsafe(const BYTE *word, SIZE_T length)
             return TRUE;
         }
     }
+    if (!allowStaticPictures) {
+        for (index = 0; index < ARRAYSIZE(pictureWords); ++index) {
+            if (rtf_word_equals(word, length, pictureWords[index])) {
+                return TRUE;
+            }
+        }
+    }
     return FALSE;
 }
 
 static BOOL validate_rtf_structure(const BYTE *data, SIZE_T size,
-                                   BOOL enforceLiveSafeSubset)
+                                   RtfSafetyMode safetyMode)
 {
     SIZE_T index = 0;
     LONG depth = 0;
@@ -675,8 +734,10 @@ static BOOL validate_rtf_structure(const BYTE *data, SIZE_T size,
             }
             wordLength = index - wordStart;
             binary = rtf_word_is_bin(data + wordStart, wordLength);
-            if (enforceLiveSafeSubset &&
-                rtf_live_word_is_unsafe(data + wordStart, wordLength)) {
+            if (safetyMode != RTF_SAFETY_STRUCTURE_ONLY &&
+                rtf_safe_word_is_unsafe(
+                    data + wordStart, wordLength,
+                    safetyMode == RTF_SAFETY_HISTORY)) {
                 return FALSE;
             }
             if (index < size && data[index] == '-') {
@@ -729,7 +790,34 @@ BOOL document_validate_live_snapshot(const BYTE *data, SIZE_T size,
         }
         return FALSE;
     }
-    if (!validate_rtf_structure(data, size, TRUE)) {
+    if (!validate_rtf_structure(data, size, RTF_SAFETY_LIVE)) {
+        if (error != NULL) {
+            *error = ERROR_INVALID_DATA;
+        }
+        return FALSE;
+    }
+    return TRUE;
+}
+
+BOOL document_validate_history_snapshot(const BYTE *data, SIZE_T size,
+                                        DWORD *error)
+{
+    if (error != NULL) {
+        *error = ERROR_SUCCESS;
+    }
+    if (data == NULL || size == 0u) {
+        if (error != NULL) {
+            *error = ERROR_INVALID_PARAMETER;
+        }
+        return FALSE;
+    }
+    if (size > DOCUMENT_LIVE_SNAPSHOT_LIMIT) {
+        if (error != NULL) {
+            *error = ERROR_FILE_TOO_LARGE;
+        }
+        return FALSE;
+    }
+    if (!validate_rtf_structure(data, size, RTF_SAFETY_HISTORY)) {
         if (error != NULL) {
             *error = ERROR_INVALID_DATA;
         }
@@ -739,12 +827,13 @@ BOOL document_validate_live_snapshot(const BYTE *data, SIZE_T size,
 }
 
 static BOOL normalize_rtf_memory(AppState *app, const BYTE *data, SIZE_T size,
-                                 BOOL enforceLiveSafeSubset,
+                                 RtfSafetyMode safetyMode,
                                  MemoryStreamContext *normalized, DWORD *error)
 {
     HWND temporaryEditor;
     MemoryStreamContext source;
     EDITSTREAM input;
+    DWORD pictureError = ERROR_SUCCESS;
     BOOL result = FALSE;
 
     if (normalized == NULL || error == NULL || app == NULL ||
@@ -760,7 +849,7 @@ static BOOL normalize_rtf_memory(AppState *app, const BYTE *data, SIZE_T size,
         *error = ERROR_FILE_TOO_LARGE;
         return FALSE;
     }
-    if (!validate_rtf_structure(data, size, enforceLiveSafeSubset)) {
+    if (!validate_rtf_structure(data, size, safetyMode)) {
         *error = ERROR_INVALID_DATA;
         return FALSE;
     }
@@ -772,6 +861,11 @@ static BOOL normalize_rtf_memory(AppState *app, const BYTE *data, SIZE_T size,
         *error = GetLastError();
         return FALSE;
     }
+    if (!render_editor_install_static_picture_callback(temporaryEditor)) {
+        *error = GetLastError();
+        DestroyWindow(temporaryEditor);
+        return FALSE;
+    }
     SendMessageW(temporaryEditor, EM_EXLIMITTEXT, 0, 0x7FFFFFFE);
     ZeroMemory(&source, sizeof(source));
     source.data = (BYTE *)data;
@@ -780,8 +874,16 @@ static BOOL normalize_rtf_memory(AppState *app, const BYTE *data, SIZE_T size,
     ZeroMemory(&input, sizeof(input));
     input.dwCookie = (DWORD_PTR)&source;
     input.pfnCallback = memory_read_callback;
+    if (!render_editor_begin_static_picture_stream(temporaryEditor)) {
+        *error = GetLastError();
+        DestroyWindow(temporaryEditor);
+        return FALSE;
+    }
     SendMessageW(temporaryEditor, EM_STREAMIN, SF_RTF, (LPARAM)&input);
-    if (input.dwError != 0) {
+    if (!render_editor_end_static_picture_stream(
+            temporaryEditor, &pictureError)) {
+        *error = pictureError;
+    } else if (input.dwError != 0) {
         *error = input.dwError;
     } else if (!capture_rtf(temporaryEditor, normalized, error)) {
         /* capture_rtf supplied the error */
@@ -799,11 +901,17 @@ static BOOL apply_rtf_candidate(AppState *app, MemoryStreamContext *candidate, D
 {
     MemoryStreamContext backup;
     EDITSTREAM input;
+    DWORD pictureError = ERROR_SUCCESS;
     BOOL success;
     BOOL restoreFailed = FALSE;
     BOOL wasLoading;
 
     if (!capture_rtf(app->editor, &backup, error)) {
+        return FALSE;
+    }
+    if (!render_editor_begin_static_picture_stream(app->editor)) {
+        *error = GetLastError();
+        free_memory_stream(&backup);
         return FALSE;
     }
     wasLoading = app->loading;
@@ -814,9 +922,17 @@ static BOOL apply_rtf_candidate(AppState *app, MemoryStreamContext *candidate, D
     input.dwCookie = (DWORD_PTR)candidate;
     input.pfnCallback = memory_read_callback;
     SendMessageW(app->editor, EM_STREAMIN, SF_RTF, (LPARAM)&input);
-    success = input.dwError == 0;
+    success = render_editor_end_static_picture_stream(
+                  app->editor, &pictureError) &&
+              input.dwError == 0;
+    if (pictureError != ERROR_SUCCESS) {
+        *error = pictureError;
+    }
     if (!success) {
-        *error = input.dwError;
+        if (*error == ERROR_SUCCESS) {
+            *error = input.dwError != 0
+                         ? input.dwError : ERROR_CAN_NOT_COMPLETE;
+        }
         SetWindowTextW(app->editor, L"");
         if (!restore_rtf(app->editor, &backup)) {
             *error = ERROR_NOT_ENOUGH_MEMORY;
@@ -950,6 +1066,8 @@ static BOOL write_rtf_file(AppState *app, const WCHAR *path, DWORD *error)
 {
     HANDLE file;
     MemoryStreamContext rtf;
+    BYTE *withHistory = NULL;
+    SIZE_T withHistorySize = 0;
     BYTE *withComments = NULL;
     SIZE_T withCommentsSize = 0;
     BOOL success = FALSE;
@@ -957,12 +1075,23 @@ static BOOL write_rtf_file(AppState *app, const WCHAR *path, DWORD *error)
     if (!capture_rtf(app->editor, &rtf, error)) {
         return FALSE;
     }
-    if (!comments_embed_rtf(app, rtf.data, rtf.size, &withComments,
-                            &withCommentsSize, error)) {
+    if (!history_embed_rtf(app, rtf.data, rtf.size, &withHistory,
+                           &withHistorySize, error)) {
         free_memory_stream(&rtf);
         return FALSE;
     }
     free_memory_stream(&rtf);
+    /*
+     * Comments deliberately remain the final direct child of the RTF root;
+     * their legacy parser enforces that placement.  History is inserted
+     * first, then comments are appended after it.
+     */
+    if (!comments_embed_rtf(app, withHistory, withHistorySize, &withComments,
+                            &withCommentsSize, error)) {
+        HeapFree(GetProcessHeap(), 0, withHistory);
+        return FALSE;
+    }
+    HeapFree(GetProcessHeap(), 0, withHistory);
 
     file = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_NEW,
                        FILE_ATTRIBUTE_NORMAL, NULL);
@@ -983,8 +1112,84 @@ static BOOL write_rtf_file(AppState *app, const WCHAR *path, DWORD *error)
     return success;
 }
 
-BOOL document_capture_live_snapshot(AppState *app, BYTE **data,
+BOOL document_capture_live_snapshot(AppState *app,
+                                    const HistoryChatToken *requiredChats,
+                                    SIZE_T requiredChatCount, BYTE **data,
                                     SIZE_T *size, DWORD *error)
+{
+    MemoryStreamContext rtf;
+    BYTE *commentsOnly = NULL;
+    SIZE_T commentsOnlySize = 0;
+    SIZE_T commentsOverhead;
+    SIZE_T historyOutputLimit;
+    BYTE *withHistory = NULL;
+    SIZE_T withHistorySize = 0;
+    BYTE *withComments = NULL;
+    SIZE_T withCommentsSize = 0;
+
+    if (app == NULL || app->editor == NULL || data == NULL || size == NULL ||
+        error == NULL) {
+        if (error != NULL) {
+            *error = ERROR_INVALID_PARAMETER;
+        }
+        return FALSE;
+    }
+    *data = NULL;
+    *size = 0;
+    *error = ERROR_SUCCESS;
+    if (!capture_rtf(app->editor, &rtf, error)) {
+        return FALSE;
+    }
+    /*
+     * Comments must remain the final direct child of the RTF root. Measure
+     * their fixed encoded overhead first, then give history the exact
+     * remaining wire budget. The bounded history serializer only trims the
+     * transmitted view; the document's permanent in-memory history is
+     * untouched and a normal RTF save still writes it in full.
+     */
+    if (!comments_embed_rtf(app, rtf.data, rtf.size, &commentsOnly,
+                            &commentsOnlySize, error)) {
+        free_memory_stream(&rtf);
+        return FALSE;
+    }
+    if (commentsOnlySize < rtf.size ||
+        commentsOnlySize > DOCUMENT_LIVE_RTF_WIRE_LIMIT) {
+        HeapFree(GetProcessHeap(), 0, commentsOnly);
+        free_memory_stream(&rtf);
+        *error = commentsOnlySize < rtf.size
+                     ? ERROR_INVALID_DATA : ERROR_FILE_TOO_LARGE;
+        return FALSE;
+    }
+    commentsOverhead = commentsOnlySize - rtf.size;
+    historyOutputLimit =
+        DOCUMENT_LIVE_RTF_WIRE_LIMIT - commentsOverhead;
+    HeapFree(GetProcessHeap(), 0, commentsOnly);
+    if (!history_embed_rtf_bounded(
+            app, rtf.data, rtf.size, historyOutputLimit,
+            requiredChats, requiredChatCount, &withHistory,
+            &withHistorySize, error)) {
+        free_memory_stream(&rtf);
+        return FALSE;
+    }
+    free_memory_stream(&rtf);
+    if (!comments_embed_rtf(app, withHistory, withHistorySize, &withComments,
+                            &withCommentsSize, error)) {
+        HeapFree(GetProcessHeap(), 0, withHistory);
+        return FALSE;
+    }
+    HeapFree(GetProcessHeap(), 0, withHistory);
+    if (withCommentsSize > DOCUMENT_LIVE_RTF_WIRE_LIMIT) {
+        HeapFree(GetProcessHeap(), 0, withComments);
+        *error = ERROR_FILE_TOO_LARGE;
+        return FALSE;
+    }
+    *data = withComments;
+    *size = withCommentsSize;
+    return TRUE;
+}
+
+BOOL document_capture_revision_snapshot(AppState *app, BYTE **data,
+                                        SIZE_T *size, DWORD *error)
 {
     MemoryStreamContext rtf;
     BYTE *withComments = NULL;
@@ -1019,8 +1224,11 @@ BOOL document_capture_live_snapshot(AppState *app, BYTE **data,
     return TRUE;
 }
 
-BOOL document_apply_live_snapshot(AppState *app, const BYTE *data,
-                                  SIZE_T size, DWORD *error)
+static BOOL document_apply_snapshot(AppState *app, const BYTE *data,
+                                    SIZE_T size, DWORD *error,
+                                    DocumentHistoryMode historyMode,
+                                    const HistoryChatToken *acknowledgedChats,
+                                    SIZE_T acknowledgedChatCount)
 {
     MemoryStreamContext normalized;
     MemoryStreamContext restoreCandidate;
@@ -1048,10 +1256,20 @@ BOOL document_apply_live_snapshot(AppState *app, const BYTE *data,
     *error = ERROR_SUCCESS;
     ZeroMemory(&normalized, sizeof(normalized));
     ZeroMemory(&restoreCandidate, sizeof(restoreCandidate));
-    if (!normalize_rtf_memory(app, data, size, TRUE, &normalized, error)) {
+    if (!normalize_rtf_memory(
+            app, data, size,
+            historyMode == DOCUMENT_HISTORY_KEEP
+                ? RTF_SAFETY_HISTORY : RTF_SAFETY_LIVE,
+            &normalized, error)) {
         return FALSE;
     }
-    if (!document_capture_live_snapshot(app, &backup, &backupSize, error)) {
+    /*
+     * History loading/merging parses transactionally before swapping state,
+     * so only the body and comments need a rollback snapshot here. This also
+     * keeps a bounded live frame from expanding its own backup recursively.
+     */
+    if (!document_capture_revision_snapshot(app, &backup, &backupSize,
+                                            error)) {
         free_memory_stream(&normalized);
         return FALSE;
     }
@@ -1072,7 +1290,8 @@ BOOL document_apply_live_snapshot(AppState *app, const BYTE *data,
     comments_clear(app);
     if (!apply_rtf_candidate(app, &normalized, error)) {
         originalError = *error;
-        if (!normalize_rtf_memory(app, backup, backupSize, FALSE,
+        if (!normalize_rtf_memory(app, backup, backupSize,
+                                  RTF_SAFETY_STRUCTURE_ONLY,
                                   &restoreCandidate, &rollbackError) ||
             !apply_rtf_candidate(app, &restoreCandidate, &rollbackError) ||
             !comments_load_rtf_memory(app, backup, backupSize,
@@ -1087,11 +1306,36 @@ BOOL document_apply_live_snapshot(AppState *app, const BYTE *data,
     editorChanged = TRUE;
     if (!comments_load_rtf_memory(app, data, size, error)) {
         originalError = *error;
-        if (!normalize_rtf_memory(app, backup, backupSize, FALSE,
+        if (!normalize_rtf_memory(app, backup, backupSize,
+                                  RTF_SAFETY_STRUCTURE_ONLY,
                                   &restoreCandidate, &rollbackError) ||
             !apply_rtf_candidate(app, &restoreCandidate, &rollbackError) ||
             !comments_load_rtf_memory(app, backup, backupSize,
                                       &rollbackError)) {
+            originalError = rollbackError != ERROR_SUCCESS
+                                ? rollbackError : ERROR_CAN_NOT_COMPLETE;
+            rollbackFailed = TRUE;
+        }
+        editorChanged = rollbackFailed;
+        goto rollback_complete;
+    }
+    if ((historyMode == DOCUMENT_HISTORY_REPLACE &&
+         !history_load_rtf_memory(app, data, size, error)) ||
+        (historyMode == DOCUMENT_HISTORY_MERGE &&
+         !history_merge_rtf_memory(app, data, size, error)) ||
+        (historyMode == DOCUMENT_HISTORY_RECONCILE &&
+         !history_reconcile_rtf_memory(app, data, size, error)) ||
+        (historyMode == DOCUMENT_HISTORY_CHAT_ACK &&
+         !history_reconcile_chat_ack_rtf_memory(
+             app, data, size, acknowledgedChats,
+             acknowledgedChatCount, error))) {
+        originalError = *error;
+        if (!normalize_rtf_memory(app, backup, backupSize,
+                                  RTF_SAFETY_STRUCTURE_ONLY,
+                                  &restoreCandidate, &rollbackError) ||
+            !apply_rtf_candidate(app, &restoreCandidate, &rollbackError) ||
+            !comments_load_rtf_memory(app, backup, backupSize,
+                                     &rollbackError)) {
             originalError = rollbackError != ERROR_SUCCESS
                                 ? rollbackError : ERROR_CAN_NOT_COMPLETE;
             rollbackFailed = TRUE;
@@ -1134,6 +1378,13 @@ BOOL document_apply_live_snapshot(AppState *app, const BYTE *data,
     SendMessageW(app->editor, EM_SETEVENTMASK, 0, eventMask);
     SendMessageW(app->editor, WM_SETREDRAW, TRUE, 0);
     app->loading = priorLoading;
+    if (historyMode == DOCUMENT_HISTORY_RECONCILE ||
+        historyMode == DOCUMENT_HISTORY_CHAT_ACK) {
+        history_cancel_pending_revision(app);
+    }
+    if (historyMode == DOCUMENT_HISTORY_REPLACE) {
+        history_seed_if_empty(app);
+    }
     app_update_status(app, TRUE);
     app_update_command_ui(app);
     InvalidateRect(app->editor, NULL, FALSE);
@@ -1170,6 +1421,45 @@ rollback_complete:
     HeapFree(GetProcessHeap(), 0, backup);
     *error = originalError != ERROR_SUCCESS ? originalError : ERROR_INVALID_DATA;
     return FALSE;
+}
+
+BOOL document_apply_live_snapshot(AppState *app, const BYTE *data,
+                                  SIZE_T size, DWORD *error)
+{
+    return document_apply_snapshot(app, data, size, error,
+                                   DOCUMENT_HISTORY_REPLACE, NULL, 0u);
+}
+
+BOOL document_apply_merged_live_snapshot(AppState *app, const BYTE *data,
+                                         SIZE_T size, DWORD *error)
+{
+    return document_apply_snapshot(app, data, size, error,
+                                   DOCUMENT_HISTORY_MERGE, NULL, 0u);
+}
+
+BOOL document_apply_reconciled_live_snapshot(AppState *app,
+                                             const BYTE *data, SIZE_T size,
+                                             DWORD *error)
+{
+    return document_apply_snapshot(app, data, size, error,
+                                   DOCUMENT_HISTORY_RECONCILE, NULL, 0u);
+}
+
+BOOL document_apply_acknowledged_live_snapshot(
+    AppState *app, const BYTE *data, SIZE_T size,
+    const HistoryChatToken *acknowledgedChats,
+    SIZE_T acknowledgedChatCount, DWORD *error)
+{
+    return document_apply_snapshot(
+        app, data, size, error, DOCUMENT_HISTORY_CHAT_ACK,
+        acknowledgedChats, acknowledgedChatCount);
+}
+
+BOOL document_apply_history_snapshot(AppState *app, const BYTE *data,
+                                     SIZE_T size, DWORD *error)
+{
+    return document_apply_snapshot(app, data, size, error,
+                                   DOCUMENT_HISTORY_KEEP, NULL, 0u);
 }
 
 static BOOL create_temp_path(const WCHAR *target, WCHAR *temporary)
@@ -1242,28 +1532,37 @@ static BOOL save_to_path(AppState *app, const WCHAR *path, BOOL rtf)
     DocumentIdentity identityBeforeCommit;
     BOOL existedAtStart;
     BOOL existsBeforeCommit;
-    SIZE_T commentCount = comments_count(app);
+    SIZE_T commentCount;
+    SIZE_T chatCount;
+    SIZE_T versionCount;
 
-    if (!rtf && (app->richFormattingUsed || commentCount > 0)) {
-        WCHAR warning[512];
-        if (commentCount > 0) {
-            StringCchPrintfW(
-                warning, ARRAYSIZE(warning),
-                commentCount == 1
-                    ? L"Plain text cannot preserve fonts, colors, alignment, "
-                      L"bullets, or the document's 1 comment.\n\n"
-                      L"Save a plain-text copy anyway?"
-                    : L"Plain text cannot preserve fonts, colors, alignment, "
-                      L"bullets, or the document's %llu comments.\n\n"
-                      L"Save a plain-text copy anyway?",
-                (unsigned long long)commentCount);
-        } else {
-            StringCchCopyW(
-                warning, ARRAYSIZE(warning),
-                L"Plain text cannot preserve fonts, colors, alignment, "
-                L"bullets, or other formatting.\n\n"
-                L"Save a plain-text copy anyway?");
-        }
+    if (!history_flush_pending(app)) {
+        app_show_error(app->mainWindow,
+                       L"The current version could not be added to history.",
+                       GetLastError() != ERROR_SUCCESS
+                           ? GetLastError() : ERROR_CAN_NOT_COMPLETE);
+        return FALSE;
+    }
+    commentCount = comments_count(app);
+    chatCount = history_chat_count(app);
+    versionCount = history_version_count(app);
+
+    if (!rtf && (app->richFormattingUsed || commentCount > 0 ||
+                 chatCount > 0 || versionCount > 1)) {
+        WCHAR warning[768];
+        StringCchPrintfW(
+            warning, ARRAYSIZE(warning),
+            L"Plain text cannot preserve formatting or WordCraft review "
+            L"metadata.\n\nThis document currently has %llu comment%s, "
+            L"%llu chat message%s, and %llu saved version%s. Saving as "
+            L"plain text will remove that review history from the open "
+            L"document.\n\nSave a plain-text copy anyway?",
+            (unsigned long long)commentCount,
+            commentCount == 1 ? L"" : L"s",
+            (unsigned long long)chatCount,
+            chatCount == 1 ? L"" : L"s",
+            (unsigned long long)versionCount,
+            versionCount == 1 ? L"" : L"s");
         int choice = MessageBoxW(
             app->mainWindow, warning,
             APP_NAME, MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2);
@@ -1317,6 +1616,10 @@ static BOOL save_to_path(AppState *app, const WCHAR *path, BOOL rtf)
     if (!rtf && commentCount > 0) {
         comments_clear(app);
     }
+    if (!rtf && (chatCount > 0 || versionCount > 0)) {
+        history_clear(app);
+        history_seed_if_empty(app);
+    }
     query_file_identity(path, &app->fileIdentity);
     document_mark_modified(app, FALSE);
     app_set_status_message(app, L"Document saved");
@@ -1343,8 +1646,21 @@ void document_mark_modified(AppState *app, BOOL modified)
     }
     SendMessageW(app->editor, EM_SETMODIFY, modified, 0);
     if (modified && !app->loading) {
+        history_note_document_changed(app);
         live_share_document_changed(app);
     }
+}
+
+void document_mark_metadata_modified(AppState *app)
+{
+    if (app == NULL || app->editor == NULL) {
+        return;
+    }
+    if (!app->modified) {
+        app->modified = TRUE;
+        document_update_title(app);
+    }
+    SendMessageW(app->editor, EM_SETMODIFY, TRUE, 0);
 }
 
 BOOL document_prompt_save(AppState *app)
@@ -1374,6 +1690,7 @@ BOOL document_new(AppState *app, BOOL askToSave)
         return FALSE;
     }
     comments_clear(app);
+    history_clear(app);
     app->loading = TRUE;
     SetWindowTextW(app->editor, L"");
     format_initialize_document(app);
@@ -1385,6 +1702,7 @@ BOOL document_new(AppState *app, BOOL askToSave)
     SendMessageW(app->editor, EM_EMPTYUNDOBUFFER, 0, 0);
     SendMessageW(app->editor, EM_SETSEL, 0, 0);
     document_mark_modified(app, FALSE);
+    history_seed_if_empty(app);
     app->wordCountDirty = TRUE;
     app_update_status(app, TRUE);
     format_sync_controls(app);
@@ -1456,6 +1774,7 @@ BOOL document_open_path(AppState *app, const WCHAR *path, BOOL askToSave)
     }
     if (rtf) {
         DWORD commentError = ERROR_SUCCESS;
+        DWORD historyError = ERROR_SUCCESS;
         if (!comments_load_rtf_file(app, path, &commentError)) {
             comments_clear(app);
             MessageBoxW(
@@ -1464,8 +1783,18 @@ BOOL document_open_path(AppState *app, const WCHAR *path, BOOL askToSave)
                 L"comment metadata was invalid and could not be loaded.",
                 APP_NAME, MB_OK | MB_ICONWARNING);
         }
+        if (!history_load_rtf_file(app, path, &historyError)) {
+            history_clear(app);
+            MessageBoxW(
+                app->mainWindow,
+                L"The document text opened successfully, but its WordCraft "
+                L"chat or version-history metadata was invalid and could not "
+                L"be loaded.",
+                APP_NAME, MB_OK | MB_ICONWARNING);
+        }
     } else {
         comments_clear(app);
+        history_clear(app);
     }
     app->currentIsRtf = rtf;
     app->richFormattingUsed = rtf;
@@ -1474,6 +1803,7 @@ BOOL document_open_path(AppState *app, const WCHAR *path, BOOL askToSave)
     SendMessageW(app->editor, EM_SETSEL, 0, 0);
     SendMessageW(app->editor, EM_SCROLLCARET, 0, 0);
     document_mark_modified(app, FALSE);
+    history_seed_if_empty(app);
     app->wordCountDirty = TRUE;
     text_engine_note_layout_change(app);
     pageview_mark_dirty(app);

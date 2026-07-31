@@ -23,7 +23,13 @@
 #define LIVE_HOST_SOCKET_CAPACITY 48u
 #define LIVE_IO_CHUNK 65536u
 #define LIVE_IO_BUDGET (1024u * 1024u)
-#define LIVE_SELECT_MILLISECONDS 20u
+/*
+ * select() returns immediately for socket activity.  This timeout only polls
+ * the Win32 stop/wake events, which cannot participate in a Winsock fd_set.
+ * A 100 ms idle interval avoids waking a battery-powered ARM64 system roughly
+ * 50 times per second while keeping queued local work and shutdown responsive.
+ */
+#define LIVE_SELECT_MILLISECONDS 100u
 #define LIVE_HANDSHAKE_TIMEOUT_MS 10000u
 #define LIVE_CONNECT_TIMEOUT_MS 15000u
 #define LIVE_FRAME_TIMEOUT_MS 30000u
@@ -36,6 +42,8 @@
 #define LIVE_COMMAND_QUEUE_MAX 64u
 #define LIVE_COMMAND_QUEUE_MAX_BYTES (32u * 1024u * 1024u)
 #define LIVE_PEER_QUEUE_MAX_BYTES (32u * 1024u * 1024u)
+#define LIVE_PUBLICATION_QUEUE_MAX 1024u
+#define LIVE_PUBLICATION_QUEUE_MAX_BYTES (64u * 1024u * 1024u)
 
 typedef enum WireType {
     WIRE_HELLO = 1,
@@ -92,6 +100,7 @@ typedef struct Peer {
     ULONGLONG heartbeat_due;
     ULONGLONG heartbeat_deadline;
     BOOL awaiting_pong;
+    uint64_t snapshot_revision_queued;
     RxState rx;
     SendNode *send_head;
     SendNode *send_tail;
@@ -104,6 +113,13 @@ typedef struct LiveCommand {
     uint64_t base_revision;
     struct LiveCommand *next;
 } LiveCommand;
+
+typedef struct HostPublication {
+    WireBuffer *buffer;
+    uint64_t revision;
+    uint64_t generation;
+    struct HostPublication *next;
+} HostPublication;
 
 struct LiveContext {
     CRITICAL_SECTION lifecycle_lock;
@@ -139,6 +155,11 @@ struct LiveContext {
     unsigned char *document;
     size_t document_size;
     uint64_t document_generation;
+    uint64_t broadcast_revision;
+    HostPublication *publication_head;
+    HostPublication *publication_tail;
+    size_t publication_count;
+    size_t publication_bytes;
 
     LiveCommand *command_head;
     LiveCommand *command_tail;
@@ -149,6 +170,7 @@ struct LiveContext {
     LiveEvent *event_tail;
     size_t event_count;
     size_t event_bytes;
+    BOOL notification_pending;
 };
 
 typedef struct HostWorker {
@@ -184,6 +206,7 @@ typedef struct ResolverRequest {
 
 static DWORD WINAPI live_worker_main(void *parameter);
 static DWORD WINAPI resolver_thread_main(void *parameter);
+static void wire_buffer_release(WireBuffer *buffer);
 
 static void copy_text(char *destination, size_t capacity, const char *source)
 {
@@ -255,6 +278,7 @@ static LiveEvent *event_allocate(LiveEventType type)
 static BOOL enqueue_event(LiveContext *context, LiveEvent *event)
 {
     BOOL accepted = FALSE;
+    BOOL should_notify = FALSE;
     HWND window = NULL;
     UINT message = 0u;
     WPARAM event_type = 0u;
@@ -279,7 +303,12 @@ static BOOL enqueue_event(LiveContext *context, LiveEvent *event)
         context->event_bytes += event->data_size;
         window = context->notify_window;
         message = context->notify_message;
-        event_type = (WPARAM)event->type;
+        if (window != NULL && message != 0u &&
+            !context->notification_pending) {
+            context->notification_pending = TRUE;
+            event_type = (WPARAM)event->type;
+            should_notify = TRUE;
+        }
         accepted = TRUE;
     }
     LeaveCriticalSection(&context->lock);
@@ -288,8 +317,10 @@ static BOOL enqueue_event(LiveContext *context, LiveEvent *event)
         event_release(event);
         return FALSE;
     }
-    if (window != NULL && message != 0u) {
-        (void)PostMessageW(window, message, event_type, 0);
+    if (should_notify && !PostMessageW(window, message, event_type, 0)) {
+        EnterCriticalSection(&context->lock);
+        context->notification_pending = FALSE;
+        LeaveCriticalSection(&context->lock);
     }
     return TRUE;
 }
@@ -702,6 +733,22 @@ static void free_commands_locked(LiveContext *context)
     context->command_bytes = 0u;
 }
 
+static void free_publications_locked(LiveContext *context)
+{
+    HostPublication *publication = context->publication_head;
+
+    while (publication != NULL) {
+        HostPublication *next = publication->next;
+        wire_buffer_release(publication->buffer);
+        free(publication);
+        publication = next;
+    }
+    context->publication_head = NULL;
+    context->publication_tail = NULL;
+    context->publication_count = 0u;
+    context->publication_bytes = 0u;
+}
+
 static void free_events_locked(LiveContext *context)
 {
     LiveEvent *event = context->event_head;
@@ -715,6 +762,7 @@ static void free_events_locked(LiveContext *context)
     context->event_tail = NULL;
     context->event_count = 0u;
     context->event_bytes = 0u;
+    context->notification_pending = FALSE;
 }
 
 LiveContext *live_create(HWND notify_window, UINT notify_message)
@@ -749,6 +797,7 @@ LiveEvent *live_pop_event(LiveContext *context)
         context->event_head = event->_next;
         if (context->event_head == NULL) {
             context->event_tail = NULL;
+            context->notification_pending = FALSE;
         }
         event->_next = NULL;
         --context->event_count;
@@ -771,6 +820,7 @@ BOOL live_get_status(LiveContext *context, LiveStatus *status)
     status->client_count = context->client_count;
     status->port = context->port;
     status->revision = context->revision;
+    status->broadcast_revision = context->broadcast_revision;
     status->worker_running = context->worker_running;
     status->last_error = context->last_error;
     status->last_system_error = context->last_system_error;
@@ -960,6 +1010,7 @@ static void peer_close(Peer *peer)
     peer->heartbeat_due = 0u;
     peer->heartbeat_deadline = 0u;
     peer->awaiting_pong = FALSE;
+    peer->snapshot_revision_queued = 0u;
 }
 
 static BOOL peer_queue_buffer(LiveContext *context, Peer *peer,
@@ -1254,16 +1305,21 @@ static uint32_t next_host_peer_id(HostWorker *worker)
 static BOOL host_queue_current_snapshot(LiveContext *context, Peer *peer)
 {
     WireBuffer *buffer;
+    uint64_t revision;
     BOOL queued;
 
     EnterCriticalSection(&context->lock);
-    buffer = wire_buffer_create(WIRE_SNAPSHOT, 0u, context->revision, 0u,
+    revision = context->revision;
+    buffer = wire_buffer_create(WIRE_SNAPSHOT, 0u, revision, 0u,
                                 context->document, context->document_size);
     LeaveCriticalSection(&context->lock);
     if (buffer == NULL) {
         return FALSE;
     }
     queued = peer_queue_buffer(context, peer, buffer);
+    if (queued) {
+        peer->snapshot_revision_queued = revision;
+    }
     wire_buffer_release(buffer);
     return queued;
 }
@@ -1638,35 +1694,51 @@ static void host_drain_send_queues(LiveContext *context, HostWorker *worker,
 
 static BOOL host_broadcast_latest(LiveContext *context, HostWorker *worker)
 {
-    WireBuffer *buffer;
-    uint64_t generation;
-    size_t index;
+    for (;;) {
+        HostPublication *publication;
+        size_t index;
 
-    EnterCriticalSection(&context->lock);
-    generation = context->document_generation;
-    if (generation == worker->seen_generation) {
-        LeaveCriticalSection(&context->lock);
-        return TRUE;
-    }
-    buffer = wire_buffer_create(WIRE_SNAPSHOT, 0u, context->revision, 0u,
-                                context->document, context->document_size);
-    LeaveCriticalSection(&context->lock);
-    if (buffer == NULL) {
-        set_context_error(context, LIVE_ERROR_OUT_OF_MEMORY,
-                          ERROR_NOT_ENOUGH_MEMORY,
-                          "Could not publish the canonical snapshot", TRUE);
-        return FALSE;
-    }
-    worker->seen_generation = generation;
-    for (index = 0u; index < LIVE_HOST_SOCKET_CAPACITY; ++index) {
-        Peer *peer = &worker->peers[index];
-        if (peer->phase == PEER_AUTHENTICATED &&
-            !peer_queue_buffer(context, peer, buffer)) {
-            host_disconnect_peer(context, peer);
+        EnterCriticalSection(&context->lock);
+        publication = context->publication_head;
+        if (publication == NULL) {
+            LeaveCriticalSection(&context->lock);
+            return TRUE;
         }
+        context->publication_head = publication->next;
+        if (context->publication_head == NULL) {
+            context->publication_tail = NULL;
+        }
+        publication->next = NULL;
+        --context->publication_count;
+        context->publication_bytes -= publication->buffer->size;
+        LeaveCriticalSection(&context->lock);
+
+        worker->seen_generation = publication->generation;
+        for (index = 0u; index < LIVE_HOST_SOCKET_CAPACITY; ++index) {
+            Peer *peer = &worker->peers[index];
+            if (peer->phase != PEER_AUTHENTICATED ||
+                publication->revision <=
+                    peer->snapshot_revision_queued) {
+                continue;
+            }
+            if (!peer_queue_buffer(
+                    context, peer, publication->buffer)) {
+                host_disconnect_peer(context, peer);
+            } else {
+                peer->snapshot_revision_queued =
+                    publication->revision;
+            }
+        }
+        EnterCriticalSection(&context->lock);
+        if (context->broadcast_revision <
+            publication->revision) {
+            context->broadcast_revision =
+                publication->revision;
+        }
+        LeaveCriticalSection(&context->lock);
+        wire_buffer_release(publication->buffer);
+        free(publication);
     }
-    wire_buffer_release(buffer);
-    return TRUE;
 }
 
 static void signal_startup(LiveContext *context, BOOL success)
@@ -2578,11 +2650,13 @@ void live_stop(LiveContext *context)
 
     EnterCriticalSection(&context->lock);
     free_commands_locked(context);
+    free_publications_locked(context);
     secure_zero(context->document, context->document_size);
     free(context->document);
     context->document = NULL;
     context->document_size = 0u;
     context->document_generation = 0u;
+    context->broadcast_revision = 0u;
     context->role = LIVE_ROLE_NONE;
     context->state = LIVE_STATE_STOPPED;
     context->worker_running = FALSE;
@@ -2704,6 +2778,7 @@ BOOL live_host_start(LiveContext *context, uint16_t port,
     context->document = document;
     context->document_size = initial_size;
     context->document_generation = 1u;
+    context->broadcast_revision = initial_revision;
     startup_event = context->startup_event;
     LeaveCriticalSection(&context->lock);
     secure_zero(token, sizeof(token));
@@ -2828,6 +2903,8 @@ BOOL live_client_join(LiveContext *context, const char *invitation,
 BOOL live_host_publish(LiveContext *context, const void *data, size_t size)
 {
     unsigned char *copy = NULL;
+    HostPublication *publication = NULL;
+    WireBuffer *buffer = NULL;
     HANDLE wake_event;
 
     if (context == NULL || (size != 0u && data == NULL)) {
@@ -2848,20 +2925,49 @@ BOOL live_host_publish(LiveContext *context, const void *data, size_t size)
         }
         memcpy(copy, data, size);
     }
+    publication = (HostPublication *)calloc(1u, sizeof(*publication));
+    buffer = wire_buffer_create(WIRE_SNAPSHOT, 0u, 0u, 0u, data, size);
+    if (publication == NULL || buffer == NULL) {
+        free(publication);
+        wire_buffer_release(buffer);
+        secure_zero(copy, size);
+        free(copy);
+        return api_failure(context, LIVE_ERROR_OUT_OF_MEMORY,
+                           ERROR_NOT_ENOUGH_MEMORY,
+                           "Could not queue the live document");
+    }
+    publication->buffer = buffer;
     EnterCriticalSection(&context->lock);
     if (context->role != LIVE_ROLE_HOST ||
         context->state != LIVE_STATE_LISTENING || !context->worker_running) {
         LeaveCriticalSection(&context->lock);
+        wire_buffer_release(buffer);
+        free(publication);
+        secure_zero(copy, size);
         free(copy);
         return api_failure(context, LIVE_ERROR_BUSY, ERROR_INVALID_STATE,
                            "This context is not an active live host");
     }
     if (context->revision == UINT64_MAX) {
         LeaveCriticalSection(&context->lock);
+        wire_buffer_release(buffer);
+        free(publication);
+        secure_zero(copy, size);
         free(copy);
         return api_failure(context, LIVE_ERROR_REVISION_OVERFLOW,
                            ERROR_ARITHMETIC_OVERFLOW,
                            "The live revision cannot be advanced");
+    }
+    if (context->publication_count >= LIVE_PUBLICATION_QUEUE_MAX ||
+        buffer->size > LIVE_PUBLICATION_QUEUE_MAX_BYTES -
+                           context->publication_bytes) {
+        LeaveCriticalSection(&context->lock);
+        wire_buffer_release(buffer);
+        free(publication);
+        secure_zero(copy, size);
+        free(copy);
+        SetLastError(ERROR_NOT_ENOUGH_QUOTA);
+        return FALSE;
     }
     secure_zero(context->document, context->document_size);
     free(context->document);
@@ -2872,6 +2978,17 @@ BOOL live_host_publish(LiveContext *context, const void *data, size_t size)
     if (context->document_generation == 0u) {
         context->document_generation = 1u;
     }
+    publication->revision = context->revision;
+    publication->generation = context->document_generation;
+    write_u64(buffer->bytes + 16u, publication->revision);
+    if (context->publication_tail != NULL) {
+        context->publication_tail->next = publication;
+    } else {
+        context->publication_head = publication;
+    }
+    context->publication_tail = publication;
+    ++context->publication_count;
+    context->publication_bytes += buffer->size;
     wake_event = context->wake_event;
     LeaveCriticalSection(&context->lock);
     queue_status_event(context);

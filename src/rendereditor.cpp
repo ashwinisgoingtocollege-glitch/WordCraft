@@ -6,6 +6,7 @@
 #include "rendereditor.h"
 
 #include <ole2.h>
+#include <cguid.h>
 #include <richole.h>
 #include <textserv.h>
 #include <d2d1.h>
@@ -37,6 +38,8 @@ struct RenderRuntime {
 };
 
 static RenderRuntime runtime = {};
+static const WCHAR staticPictureCallbackProperty[] =
+    L"WordCraft.StaticPictureOleCallback";
 
 static BOOL copy_exported_iid(HMODULE module, const char *name, IID *iid)
 {
@@ -167,11 +170,221 @@ static BOOL message_affects_formatter(UINT message)
     }
 }
 
+static BOOL is_safe_static_picture_class(REFCLSID clsid)
+{
+    return IsEqualCLSID(clsid, CLSID_StaticMetafile) ||
+           IsEqualCLSID(clsid, CLSID_StaticDib) ||
+           IsEqualCLSID(clsid, CLSID_Picture_Metafile) ||
+           IsEqualCLSID(clsid, CLSID_Picture_EnhMetafile) ||
+           IsEqualCLSID(clsid, CLSID_Picture_Dib);
+}
+
+class StaticPictureOleCallback final : public IRichEditOleCallback {
+public:
+    StaticPictureOleCallback() : references_(1), lastFailure_(S_OK) {}
+
+    void ResetFailure() noexcept
+    {
+        InterlockedExchange(&lastFailure_, static_cast<LONG>(S_OK));
+    }
+
+    HRESULT TakeFailure() noexcept
+    {
+        return static_cast<HRESULT>(
+            InterlockedExchange(&lastFailure_,
+                                static_cast<LONG>(S_OK)));
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,
+                                             void **object) noexcept override
+    {
+        if (object == nullptr) {
+            return E_POINTER;
+        }
+        *object = nullptr;
+        if (IsEqualIID(iid, IID_IUnknown) ||
+            IsEqualIID(iid, IID_IRichEditOleCallback)) {
+            *object = static_cast<IRichEditOleCallback *>(this);
+            AddRef();
+            return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() noexcept override
+    {
+        return static_cast<ULONG>(InterlockedIncrement(&references_));
+    }
+
+    ULONG STDMETHODCALLTYPE Release() noexcept override
+    {
+        LONG remaining = InterlockedDecrement(&references_);
+        if (remaining == 0) {
+            delete this;
+            return 0;
+        }
+        return static_cast<ULONG>(remaining);
+    }
+
+    HRESULT STDMETHODCALLTYPE GetNewStorage(
+        IStorage **storage) noexcept override
+    {
+        ILockBytes *bytes = nullptr;
+        HRESULT status;
+
+        if (storage == nullptr) {
+            NoteFailure(E_POINTER);
+            return E_POINTER;
+        }
+        *storage = nullptr;
+        status = CreateILockBytesOnHGlobal(nullptr, TRUE, &bytes);
+        if (FAILED(status) || bytes == nullptr) {
+            status = FAILED(status) ? status : E_OUTOFMEMORY;
+            NoteFailure(status);
+            return status;
+        }
+        status = StgCreateDocfileOnILockBytes(
+            bytes, STGM_CREATE | STGM_READWRITE | STGM_SHARE_EXCLUSIVE,
+            0, storage);
+        bytes->Release();
+        if (FAILED(status)) {
+            NoteFailure(status);
+        }
+        return status;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetInPlaceContext(
+        IOleInPlaceFrame **frame, IOleInPlaceUIWindow **document,
+        OLEINPLACEFRAMEINFO *frameInfo) noexcept override
+    {
+        if (frame != nullptr) {
+            *frame = nullptr;
+        }
+        if (document != nullptr) {
+            *document = nullptr;
+        }
+        if (frameInfo != nullptr) {
+            UINT size = frameInfo->cb;
+            std::memset(frameInfo, 0, sizeof(*frameInfo));
+            frameInfo->cb = size;
+        }
+        return E_NOTIMPL;
+    }
+
+    HRESULT STDMETHODCALLTYPE ShowContainerUI(BOOL) noexcept override
+    {
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInsertObject(
+        CLSID *requestedClass, IStorage *storage, LONG) noexcept override
+    {
+        CLSID candidate = CLSID_NULL;
+        BOOL haveCandidate = FALSE;
+
+        if (requestedClass != nullptr) {
+            candidate = *requestedClass;
+            haveCandidate = TRUE;
+        }
+        if (storage != nullptr) {
+            CLSID storedClass = CLSID_NULL;
+            if (SUCCEEDED(ReadClassStg(storage, &storedClass))) {
+                if (haveCandidate &&
+                    !IsEqualCLSID(candidate, CLSID_NULL) &&
+                    !IsEqualCLSID(storedClass, CLSID_NULL) &&
+                    !IsEqualCLSID(candidate, storedClass)) {
+                    NoteFailure(E_ACCESSDENIED);
+                    return S_FALSE;
+                }
+                if (!IsEqualCLSID(storedClass, CLSID_NULL)) {
+                    candidate = storedClass;
+                    haveCandidate = TRUE;
+                }
+            }
+        }
+        /*
+         * RichEdit uses CLSID_NULL while constructing inert \pict objects,
+         * before assigning one of the standard static-picture classes.
+         * Active OLE classes always arrive with their concrete CLSID and are
+         * rejected below.
+         */
+        if (!haveCandidate || IsEqualCLSID(candidate, CLSID_NULL)) {
+            return S_OK;
+        }
+        if (!is_safe_static_picture_class(candidate)) {
+            NoteFailure(E_ACCESSDENIED);
+            return S_FALSE;
+        }
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE DeleteObject(IOleObject *) noexcept override
+    {
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryAcceptData(
+        IDataObject *, CLIPFORMAT *, DWORD, BOOL,
+        HGLOBAL) noexcept override
+    {
+        return E_NOTIMPL;
+    }
+
+    HRESULT STDMETHODCALLTYPE ContextSensitiveHelp(BOOL) noexcept override
+    {
+        return E_NOTIMPL;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetClipboardData(
+        CHARRANGE *, DWORD, IDataObject **dataObject) noexcept override
+    {
+        if (dataObject != nullptr) {
+            *dataObject = nullptr;
+        }
+        return E_NOTIMPL;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetDragDropEffect(
+        BOOL, DWORD, DWORD *effect) noexcept override
+    {
+        if (effect == nullptr) {
+            return E_POINTER;
+        }
+        *effect = DROPEFFECT_NONE;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetContextMenu(
+        WORD, IOleObject *, CHARRANGE *, HMENU *menu) noexcept override
+    {
+        if (menu != nullptr) {
+            *menu = nullptr;
+        }
+        return S_FALSE;
+    }
+
+private:
+    ~StaticPictureOleCallback() = default;
+
+    void NoteFailure(HRESULT failure) noexcept
+    {
+        if (FAILED(failure)) {
+            InterlockedCompareExchange(
+                &lastFailure_, static_cast<LONG>(failure),
+                static_cast<LONG>(S_OK));
+        }
+    }
+
+    LONG references_;
+    LONG lastFailure_;
+};
+
 class RenderEditor final : public ITextHost2 {
 public:
     explicit RenderEditor(HWND window)
         : references_(1), window_(window), privateUnknown_(nullptr),
-          services_(nullptr), services2_(nullptr), d2dFactory_(nullptr),
+          services_(nullptr), services2_(nullptr), oleCallback_(nullptr),
+          d2dFactory_(nullptr),
           hwndTarget_(nullptr), formatterWindow_(nullptr),
           formatterDirty_(TRUE), background_(GetSysColor(COLOR_WINDOW)),
           propertyBits_(0), backend_(RENDER_ENGINE_BACKEND_NONE),
@@ -289,6 +502,43 @@ public:
         }
         inPlaceActive_ = TRUE;
 
+        {
+            LRESULT queryModeSet = 0;
+            LRESULT queryMode = 0;
+
+            status = SendToServices(
+                EM_SETQUERYRTFOBJ, 0, TRUE, &queryModeSet);
+            if (FAILED(status) || queryModeSet == 0) {
+                lastDrawResult_ = FAILED(status) ? status : E_FAIL;
+                SetLastError(ERROR_NOT_SUPPORTED);
+                return FALSE;
+            }
+            status = SendToServices(
+                EM_GETQUERYRTFOBJ, 0, 0, &queryMode);
+            if (FAILED(status) || queryMode == 0) {
+                lastDrawResult_ = FAILED(status) ? status : E_FAIL;
+                SetLastError(ERROR_NOT_SUPPORTED);
+                return FALSE;
+            }
+        }
+        oleCallback_ = new (std::nothrow) StaticPictureOleCallback();
+        if (oleCallback_ == nullptr) {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+        {
+            LRESULT callbackInstalled = 0;
+            status = SendToServices(
+                EM_SETOLECALLBACK, 0,
+                reinterpret_cast<LPARAM>(oleCallback_),
+                &callbackInstalled);
+            if (FAILED(status) || callbackInstalled == 0) {
+                lastDrawResult_ = FAILED(status) ? status : E_FAIL;
+                SetLastError(ERROR_CANNOT_MAKE);
+                return FALSE;
+            }
+        }
+
         if (initialText != nullptr && initialText[0] != L'\0') {
             SendToServices(WM_SETTEXT, 0,
                            reinterpret_cast<LPARAM>(initialText), nullptr);
@@ -299,6 +549,10 @@ public:
 
     void Shutdown()
     {
+        if (services_ != nullptr && oleCallback_ != nullptr) {
+            LRESULT ignored = 0;
+            services_->TxSendMessage(EM_SETOLECALLBACK, 0, 0, &ignored);
+        }
         if (services_ != nullptr && uiActive_) {
             services_->OnTxUIDeactivate();
             uiActive_ = FALSE;
@@ -335,6 +589,10 @@ public:
                 privateUnknown_->Release();
             }
             privateUnknown_ = nullptr;
+        }
+        if (oleCallback_ != nullptr) {
+            oleCallback_->Release();
+            oleCallback_ = nullptr;
         }
     }
 
@@ -510,6 +768,22 @@ public:
             services_->OnTxUIDeactivate();
             uiActive_ = FALSE;
         }
+    }
+
+    BOOL BeginStaticPictureStream()
+    {
+        if (oleCallback_ == nullptr) {
+            SetLastError(ERROR_INVALID_STATE);
+            return FALSE;
+        }
+        oleCallback_->ResetFailure();
+        return TRUE;
+    }
+
+    HRESULT EndStaticPictureStream()
+    {
+        return oleCallback_ != nullptr
+                   ? oleCallback_->TakeFailure() : E_UNEXPECTED;
     }
 
     LRESULT Query(UINT query) const
@@ -1041,6 +1315,12 @@ private:
             return FALSE;
         }
         SendMessageW(formatterWindow_, EM_EXLIMITTEXT, 0, 0x7FFFFFFE);
+        if (!render_editor_install_static_picture_callback(
+                formatterWindow_)) {
+            DestroyWindow(formatterWindow_);
+            formatterWindow_ = nullptr;
+            return FALSE;
+        }
         mask = SendMessageW(formatterWindow_, EM_GETEVENTMASK, 0, 0);
         SendMessageW(formatterWindow_, EM_SETEVENTMASK, 0,
                      mask & ~(ENM_CHANGE | ENM_UPDATE | ENM_SELCHANGE |
@@ -1077,8 +1357,22 @@ private:
         std::memset(&stream, 0, sizeof(stream));
         stream.dwCookie = reinterpret_cast<DWORD_PTR>(&transfer);
         stream.pfnCallback = stream_rtf_in;
+        if (!render_editor_begin_static_picture_stream(
+                formatterWindow_)) {
+            SendMessageW(formatterWindow_, WM_SETREDRAW, TRUE, 0);
+            return FALSE;
+        }
         SendMessageW(formatterWindow_, EM_STREAMIN, SF_RTF,
                      reinterpret_cast<LPARAM>(&stream));
+        {
+            DWORD pictureError = ERROR_SUCCESS;
+            if (!render_editor_end_static_picture_stream(
+                    formatterWindow_, &pictureError)) {
+                SendMessageW(formatterWindow_, WM_SETREDRAW, TRUE, 0);
+                SetLastError(pictureError);
+                return FALSE;
+            }
+        }
         typography = 0;
         SendToServices(EM_GETTYPOGRAPHYOPTIONS, 0, 0, &typography);
         SendMessageW(formatterWindow_, EM_SETTYPOGRAPHYOPTIONS,
@@ -1337,6 +1631,7 @@ private:
     IUnknown *privateUnknown_;
     ITextServices *services_;
     ITextServices2 *services2_;
+    StaticPictureOleCallback *oleCallback_;
     ID2D1Factory *d2dFactory_;
     ID2D1HwndRenderTarget *hwndTarget_;
     HWND formatterWindow_;
@@ -1676,4 +1971,120 @@ extern "C" BOOL render_editor_is_window(HWND editor)
         return FALSE;
     }
     return lstrcmpW(className, WORDCRAFT_RENDER_EDITOR_CLASS) == 0;
+}
+
+extern "C" BOOL render_editor_install_static_picture_callback(HWND richEdit)
+{
+    StaticPictureOleCallback *existing;
+    StaticPictureOleCallback *callback;
+    LRESULT installed;
+
+    if (richEdit == nullptr || !IsWindow(richEdit)) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    existing = reinterpret_cast<StaticPictureOleCallback *>(
+        GetPropW(richEdit, staticPictureCallbackProperty));
+    if (existing != nullptr) {
+        if (SendMessageW(richEdit, EM_GETQUERYRTFOBJ, 0, 0) == 0) {
+            SetLastError(ERROR_NOT_SUPPORTED);
+            return FALSE;
+        }
+        return TRUE;
+    }
+    if (SendMessageW(richEdit, EM_SETQUERYRTFOBJ, 0, TRUE) == 0 ||
+        SendMessageW(richEdit, EM_GETQUERYRTFOBJ, 0, 0) == 0) {
+        SetLastError(ERROR_NOT_SUPPORTED);
+        return FALSE;
+    }
+    callback = new (std::nothrow) StaticPictureOleCallback();
+    if (callback == nullptr) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    installed = SendMessageW(
+        richEdit, EM_SETOLECALLBACK, 0,
+        reinterpret_cast<LPARAM>(callback));
+    if (installed != 0 &&
+        !SetPropW(richEdit, staticPictureCallbackProperty,
+                  reinterpret_cast<HANDLE>(callback))) {
+        SendMessageW(richEdit, EM_SETOLECALLBACK, 0, 0);
+        installed = 0;
+    }
+    callback->Release();
+    if (installed == 0) {
+        SetLastError(ERROR_CANNOT_MAKE);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static DWORD render_editor_hresult_error(HRESULT status)
+{
+    if (status == E_OUTOFMEMORY) {
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    if (status == E_ACCESSDENIED) {
+        return ERROR_ACCESS_DENIED;
+    }
+    if (HRESULT_FACILITY(status) == FACILITY_WIN32 &&
+        HRESULT_CODE(status) != ERROR_SUCCESS) {
+        return HRESULT_CODE(status);
+    }
+    return ERROR_CAN_NOT_COMPLETE;
+}
+
+extern "C" BOOL render_editor_begin_static_picture_stream(HWND editor)
+{
+    StaticPictureOleCallback *callback;
+
+    if (render_editor_is_window(editor)) {
+        RenderEditor *state = editor_from_window(editor);
+        return state != nullptr &&
+               state->BeginStaticPictureStream();
+    }
+    callback = reinterpret_cast<StaticPictureOleCallback *>(
+        editor != nullptr
+            ? GetPropW(editor, staticPictureCallbackProperty) : nullptr);
+    if (callback == nullptr) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    callback->ResetFailure();
+    return TRUE;
+}
+
+extern "C" BOOL render_editor_end_static_picture_stream(HWND editor,
+                                                         DWORD *error)
+{
+    StaticPictureOleCallback *callback;
+    HRESULT status;
+
+    if (error == nullptr) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *error = ERROR_SUCCESS;
+    if (render_editor_is_window(editor)) {
+        RenderEditor *state = editor_from_window(editor);
+        if (state == nullptr) {
+            *error = ERROR_INVALID_HANDLE;
+            return FALSE;
+        }
+        status = state->EndStaticPictureStream();
+    } else {
+        callback = reinterpret_cast<StaticPictureOleCallback *>(
+            editor != nullptr
+                ? GetPropW(editor, staticPictureCallbackProperty) : nullptr);
+        if (callback == nullptr) {
+            *error = ERROR_INVALID_HANDLE;
+            return FALSE;
+        }
+        status = callback->TakeFailure();
+    }
+    if (FAILED(status)) {
+        *error = render_editor_hresult_error(status);
+        return FALSE;
+    }
+    return TRUE;
 }

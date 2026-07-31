@@ -287,6 +287,7 @@ void dialogs_handle_find_replace(AppState *app, FINDREPLACEW *request)
     }
     if ((request->Flags & FR_DIALOGTERM) != 0) {
         app->findDialog = NULL;
+        app_update_command_ui(app);
         SetFocus(app->editor);
         return;
     }

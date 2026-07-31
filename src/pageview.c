@@ -1929,6 +1929,9 @@ BOOL pageview_paginate(AppState *app)
     LONG pageHeight;
     LONG nextCharacter;
     LONG previousCharacter = 0;
+    WCHAR *paginationText = NULL;
+    SIZE_T paginationTextLength = 0;
+    BOOL trailingForcedBreak = FALSE;
     DWORD error = ERROR_SUCCESS;
     HDC dc = NULL;
     BOOL success = FALSE;
@@ -1944,10 +1947,12 @@ BOOL pageview_paginate(AppState *app)
         return TRUE;
     }
     app->pageLayoutBusy = TRUE;
-    if (!editor_get_text_length(app->editor, FALSE, &textLengthSize, &error) ||
-        textLengthSize > LONG_MAX) {
+    if (!editor_get_all_text(app->editor, FALSE, &paginationText,
+                             &paginationTextLength, &error) ||
+        paginationTextLength > LONG_MAX) {
         goto cleanup;
     }
+    textLengthSize = paginationTextLength;
     textLength = (LONG)textLengthSize;
     pageview_get_page_units(app, &pageWidth, &pageHeight);
     pageWidth = pageview_thousandths_to_twips(pageWidth);
@@ -1999,10 +2004,33 @@ BOOL pageview_paginate(AppState *app)
         }
     } else {
         while (previousCharacter < textLength) {
+            LONG forcedBreak = -1;
+            LONG scan;
+
+            for (scan = previousCharacter; scan < textLength; ++scan) {
+                if (paginationText[scan] == L'\f') {
+                    forcedBreak = scan;
+                    break;
+                }
+            }
             formatRange.chrg.cpMin = previousCharacter;
-            formatRange.chrg.cpMax = -1;
+            formatRange.chrg.cpMax =
+                forcedBreak >= 0 ? forcedBreak + 1 : -1;
             nextCharacter = (LONG)SendMessageW(
                 app->editor, EM_FORMATRANGE, FALSE, (LPARAM)&formatRange);
+            /*
+             * RichEdit preserves RTF \page as U+000C in its text model, but
+             * some text-services versions do not stop EM_FORMATRANGE at that
+             * marker. Treat it as an explicit page boundary while leaving
+             * ordinary pagination under RichEdit's formatter.
+             */
+            if (forcedBreak >= 0 &&
+                (nextCharacter >= forcedBreak ||
+                 (nextCharacter <= previousCharacter &&
+                  forcedBreak == previousCharacter))) {
+                nextCharacter = forcedBreak + 1;
+                trailingForcedBreak = nextCharacter == textLength;
+            }
             if (nextCharacter <= previousCharacter) {
                 goto cleanup;
             }
@@ -2017,6 +2045,11 @@ BOOL pageview_paginate(AppState *app)
             if (newCount > LONG_MAX) {
                 goto cleanup;
             }
+        }
+        if (trailingForcedBreak &&
+            !pageview_append_end(&newEnds, &newCount, &newCapacity,
+                                 textLength)) {
+            goto cleanup;
         }
     }
     if (newCount == 0 || newCount > LONG_MAX) {
@@ -2040,6 +2073,9 @@ cleanup:
     }
     if (newEnds != NULL) {
         HeapFree(GetProcessHeap(), 0, newEnds);
+    }
+    if (paginationText != NULL) {
+        HeapFree(GetProcessHeap(), 0, paginationText);
     }
     app->pageLayoutBusy = FALSE;
     if (success) {
