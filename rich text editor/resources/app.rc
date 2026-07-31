@@ -1,0 +1,319 @@
+#include <windows.h>
+#include "resource.h"
+
+1 RT_MANIFEST "app.manifest"
+IDI_WORDCRAFT ICON "wordcraft.ico"
+
+IDR_MAINMENU MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&New\tCtrl+N",              IDM_FILE_NEW
+        MENUITEM "&Open...\tCtrl+O",          IDM_FILE_OPEN
+        MENUITEM "&Save\tCtrl+S",             IDM_FILE_SAVE
+        MENUITEM "Save &As...\tCtrl+Shift+S", IDM_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM "Page Set&up...",             IDM_FILE_PAGE_SETUP
+        MENUITEM "&Print...\tCtrl+P",          IDM_FILE_PRINT
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit",                      IDM_FILE_EXIT
+    END
+    POPUP "&Edit"
+    BEGIN
+        MENUITEM "&Undo\tCtrl+Z",              IDM_EDIT_UNDO
+        MENUITEM "&Redo\tCtrl+Y",              IDM_EDIT_REDO
+        MENUITEM SEPARATOR
+        MENUITEM "Cu&t\tCtrl+X",               IDM_EDIT_CUT
+        MENUITEM "&Copy\tCtrl+C",              IDM_EDIT_COPY
+        MENUITEM "&Paste\tCtrl+V",             IDM_EDIT_PASTE
+        MENUITEM "&Delete\tDel",               IDM_EDIT_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM "Select &All\tCtrl+A",        IDM_EDIT_SELECT_ALL
+        MENUITEM SEPARATOR
+        MENUITEM "&Find...\tCtrl+F",           IDM_EDIT_FIND
+        MENUITEM "&Replace...\tCtrl+H",        IDM_EDIT_REPLACE
+    END
+    POPUP "F&ormat"
+    BEGIN
+        MENUITEM "&Font...\tCtrl+D",           IDM_FORMAT_FONT
+        MENUITEM "Text &Color...",             IDM_FORMAT_COLOR
+        MENUITEM SEPARATOR
+        MENUITEM "&Bold\tCtrl+B",              IDM_FORMAT_BOLD
+        MENUITEM "&Italic\tCtrl+I",            IDM_FORMAT_ITALIC
+        MENUITEM "&Underline\tCtrl+U",         IDM_FORMAT_UNDERLINE
+        MENUITEM "&Strikethrough",             IDM_FORMAT_STRIKE
+        MENUITEM SEPARATOR
+        POPUP "&Paragraph"
+        BEGIN
+            MENUITEM "Align &Left\tCtrl+L",    IDM_FORMAT_ALIGN_LEFT
+            MENUITEM "Align &Center\tCtrl+E",  IDM_FORMAT_ALIGN_CENTER
+            MENUITEM "Align &Right\tCtrl+R",   IDM_FORMAT_ALIGN_RIGHT
+            MENUITEM "&Justify\tCtrl+J",       IDM_FORMAT_ALIGN_JUSTIFY
+            MENUITEM SEPARATOR
+            MENUITEM "&Bullets",               IDM_FORMAT_BULLETS
+            MENUITEM "Increase &Indent",       IDM_FORMAT_INDENT_INCREASE
+            MENUITEM "Decrease I&ndent",       IDM_FORMAT_INDENT_DECREASE
+        END
+    END
+    POPUP "&Insert"
+    BEGIN
+        POPUP "&Pages"
+        BEGIN
+            MENUITEM "&Cover Page",             IDM_INSERT_COVER_PAGE
+            MENUITEM "&Blank Page",             IDM_INSERT_BLANK_PAGE
+            MENUITEM "Page &Break\tCtrl+Enter", IDM_INSERT_PAGE_BREAK
+        END
+        POPUP "&Tables"
+        BEGIN
+            MENUITEM "&Table...",               IDM_INSERT_TABLE
+        END
+        POPUP "&Illustrations"
+        BEGIN
+            MENUITEM "&Pictures...",            IDM_INSERT_PICTURES
+            MENUITEM "&Shapes",                 IDM_INSERT_SHAPES
+            MENUITEM "&Icons",                  IDM_INSERT_ICONS
+            MENUITEM "&3D Models",              IDM_INSERT_3D_MODELS
+            MENUITEM "S&martArt",               IDM_INSERT_SMARTART
+            MENUITEM "&Chart",                  IDM_INSERT_CHART
+            MENUITEM "Screen&shot",             IDM_INSERT_SCREENSHOT
+        END
+        POPUP "&Media"
+        BEGIN
+            MENUITEM "&Online Video...",        IDM_INSERT_ONLINE_VIDEO
+        END
+        POPUP "&Links"
+        BEGIN
+            MENUITEM "&Link...",                IDM_INSERT_LINK
+            MENUITEM "&Bookmark...",            IDM_INSERT_BOOKMARK
+            MENUITEM "Cross-&reference...",     IDM_INSERT_CROSS_REFERENCE
+        END
+        MENUITEM "&Comment",                    IDM_INSERT_COMMENT
+        POPUP "&Header && Footer"
+        BEGIN
+            MENUITEM "&Header",                 IDM_INSERT_HEADER
+            MENUITEM "&Footer",                 IDM_INSERT_FOOTER
+            MENUITEM "Page &Number",            IDM_INSERT_PAGE_NUMBER
+        END
+        POPUP "&Text"
+        BEGIN
+            MENUITEM "Text &Box",               IDM_INSERT_TEXT_BOX
+            MENUITEM "&Quick Parts",            IDM_INSERT_QUICK_PARTS
+            MENUITEM "&WordArt",                IDM_INSERT_WORDART
+            MENUITEM "&Drop Cap",               IDM_INSERT_DROP_CAP
+            MENUITEM "Signature &Line",         IDM_INSERT_SIGNATURE_LINE
+            MENUITEM "&Date and Time\tF5",      IDM_INSERT_DATETIME
+            MENUITEM "&Object...",              IDM_INSERT_OBJECT
+        END
+        POPUP "&Symbols"
+        BEGIN
+            MENUITEM "&Equation",               IDM_INSERT_EQUATION
+            MENUITEM "S&ymbol",                 IDM_INSERT_SYMBOL
+        END
+        MENUITEM "&eSignature fields",          IDM_INSERT_ESIGNATURE_FIELDS
+    END
+    POPUP "&View"
+    BEGIN
+        MENUITEM "&Word Wrap",                  IDM_VIEW_WORD_WRAP
+        MENUITEM "&Status Bar",                 IDM_VIEW_STATUS_BAR
+        MENUITEM "&Dark Mode\tCtrl+Shift+D",    IDM_VIEW_DARK_MODE
+        MENUITEM SEPARATOR
+        POPUP "&Zoom"
+        BEGIN
+            MENUITEM "50%",                    IDM_VIEW_ZOOM_50
+            MENUITEM "75%",                    IDM_VIEW_ZOOM_75
+            MENUITEM "100%",                   IDM_VIEW_ZOOM_100
+            MENUITEM "125%",                   IDM_VIEW_ZOOM_125
+            MENUITEM "150%",                   IDM_VIEW_ZOOM_150
+            MENUITEM "200%",                   IDM_VIEW_ZOOM_200
+        END
+    END
+    POPUP "&Tools"
+    BEGIN
+        MENUITEM "Check &Spelling as You Type", IDM_TOOLS_SPELL_CHECK
+        MENUITEM "&Inline Autocomplete\tTab to accept", IDM_TOOLS_AUTOCOMPLETE
+    END
+    POPUP "&Review"
+    BEGIN
+        MENUITEM "&New Comment\tCtrl+Alt+M",     IDM_REVIEW_ADD_COMMENT
+        MENUITEM "&Previous Comment",           IDM_REVIEW_PREVIOUS_COMMENT
+        MENUITEM "Ne&xt Comment",               IDM_REVIEW_NEXT_COMMENT
+        MENUITEM "&Delete Comment",             IDM_REVIEW_DELETE_COMMENT
+        MENUITEM SEPARATOR
+        MENUITEM "Document &Chat...",            IDM_REVIEW_DOCUMENT_CHAT
+        MENUITEM "&Version History...",          IDM_REVIEW_VERSION_HISTORY
+        MENUITEM SEPARATOR
+        MENUITEM "&Live Sharing...",             IDM_REVIEW_LIVE_SHARE
+        POPUP "Live Sharing &Commands"
+        BEGIN
+            MENUITEM "&Start Hosting",           IDM_LIVE_START_HOST
+            MENUITEM "&Join Session...",         IDM_LIVE_JOIN_SESSION
+            MENUITEM "&Copy Invitation",         IDM_LIVE_COPY_INVITATION
+            MENUITEM "&Leave Session",           IDM_LIVE_LEAVE_SESSION
+        END
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About WordCraft",            IDM_HELP_ABOUT
+    END
+END
+
+IDR_ACCELERATORS ACCELERATORS
+BEGIN
+    "N", IDM_FILE_NEW,              VIRTKEY, CONTROL
+    "O", IDM_FILE_OPEN,             VIRTKEY, CONTROL
+    "S", IDM_FILE_SAVE,             VIRTKEY, CONTROL
+    "S", IDM_FILE_SAVE_AS,          VIRTKEY, CONTROL, SHIFT
+    "P", IDM_FILE_PRINT,            VIRTKEY, CONTROL
+    "Z", IDM_EDIT_UNDO,             VIRTKEY, CONTROL
+    "Y", IDM_EDIT_REDO,             VIRTKEY, CONTROL
+    "X", IDM_EDIT_CUT,              VIRTKEY, CONTROL
+    "C", IDM_EDIT_COPY,             VIRTKEY, CONTROL
+    "V", IDM_EDIT_PASTE,            VIRTKEY, CONTROL
+    VK_INSERT, IDM_EDIT_PASTE,       VIRTKEY, SHIFT
+    VK_INSERT, IDM_EDIT_COPY,        VIRTKEY, CONTROL
+    VK_DELETE, IDM_EDIT_CUT,         VIRTKEY, SHIFT
+    "A", IDM_EDIT_SELECT_ALL,       VIRTKEY, CONTROL
+    "F", IDM_EDIT_FIND,             VIRTKEY, CONTROL
+    "H", IDM_EDIT_REPLACE,          VIRTKEY, CONTROL
+    "D", IDM_FORMAT_FONT,           VIRTKEY, CONTROL
+    "D", IDM_VIEW_DARK_MODE,        VIRTKEY, CONTROL, SHIFT
+    "B", IDM_FORMAT_BOLD,           VIRTKEY, CONTROL
+    "I", IDM_FORMAT_ITALIC,         VIRTKEY, CONTROL
+    "U", IDM_FORMAT_UNDERLINE,      VIRTKEY, CONTROL
+    "L", IDM_FORMAT_ALIGN_LEFT,     VIRTKEY, CONTROL
+    "E", IDM_FORMAT_ALIGN_CENTER,   VIRTKEY, CONTROL
+    "R", IDM_FORMAT_ALIGN_RIGHT,    VIRTKEY, CONTROL
+    "J", IDM_FORMAT_ALIGN_JUSTIFY,  VIRTKEY, CONTROL
+    "M", IDM_REVIEW_ADD_COMMENT,     VIRTKEY, CONTROL, ALT
+    VK_RETURN, IDM_INSERT_PAGE_BREAK, VIRTKEY, CONTROL
+    VK_F6, IDM_RIBBON_FOCUS,          VIRTKEY
+    VK_F5, IDM_INSERT_DATETIME,       VIRTKEY
+END
+
+IDD_CUSTOM_PAPER DIALOGEX 0, 0, 252, 136
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Custom Paper Size"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "&Width:", -1, 12, 14, 46, 12
+    EDITTEXT        IDC_CUSTOM_PAPER_WIDTH, 62, 12, 86, 14,
+                    ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "&Height:", -1, 12, 38, 46, 12
+    EDITTEXT        IDC_CUSTOM_PAPER_HEIGHT, 62, 36, 86, 14,
+                    ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "&Units:", -1, 12, 62, 46, 12
+    COMBOBOX        IDC_CUSTOM_PAPER_UNITS, 62, 60, 112, 48,
+                    CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "The current margins must leave at least 0.1 inch of printable space.",
+                    -1, 12, 84, 228, 20
+    DEFPUSHBUTTON   "OK", IDOK, 142, 112, 46, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 194, 112, 46, 14
+END
+
+IDD_LIVE_SHARE DIALOGEX 0, 0, 372, 256
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "WordCraft Live Sharing"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "Status:", -1, 12, 12, 38, 12
+    LTEXT           "Not sharing", IDC_LIVE_STATUS, 54, 12, 304, 24
+    LTEXT           "Direct sharing supports up to 32 clients on a trusted LAN or private VPN.",
+                    -1, 12, 32, 346, 20
+
+    GROUPBOX        "Host this document", -1, 8, 56, 356, 88
+    LTEXT           "Address:", -1, 18, 76, 42, 12
+    EDITTEXT        IDC_LIVE_ADVERTISED_HOST, 62, 73, 166, 14,
+                    ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "Port:", -1, 236, 76, 26, 12
+    EDITTEXT        IDC_LIVE_LISTEN_PORT, 264, 73, 42, 14,
+                    ES_AUTOHSCROLL | ES_NUMBER | WS_TABSTOP
+    PUSHBUTTON      "Start", IDC_LIVE_START_HOST, 312, 72, 40, 16
+    LTEXT           "Invitation:", -1, 18, 102, 48, 12
+    EDITTEXT        IDC_LIVE_HOST_INVITATION, 68, 100, 218, 14,
+                    ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "Copy", IDC_LIVE_COPY_INVITATION, 294, 99, 58, 16
+    LTEXT           "Use port 0 for an automatic port; advertise a LAN, VPN, or public address clients can reach.",
+                    -1, 18, 120, 334, 18
+
+    GROUPBOX        "Join another host", -1, 8, 150, 356, 54
+    LTEXT           "Invitation:", -1, 18, 169, 48, 12
+    EDITTEXT        IDC_LIVE_JOIN_INVITATION, 68, 167, 218, 14,
+                    ES_AUTOHSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON   "Join", IDC_LIVE_JOIN_SESSION, 294, 166, 58, 16
+
+    LTEXT           "The invitation token authenticates peers; use a private network because the TCP connection is not encrypted.",
+                    -1, 12, 210, 254, 28
+    PUSHBUTTON      "Leave Session", IDC_LIVE_LEAVE_SESSION, 274, 214, 80, 16
+    PUSHBUTTON      "Close", IDCANCEL, 306, 238, 48, 14
+END
+
+IDD_DOCUMENT_CHAT DIALOGEX 0, 0, 430, 330
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU |
+      WS_THICKFRAME | WS_MAXIMIZEBOX
+CAPTION "Document Chat"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "Conversation stored with this document",
+                    IDC_CHAT_STATUS, 12, 10, 406, 14
+    CONTROL         "", IDC_CHAT_TRANSCRIPT, "RICHEDIT50W",
+                    WS_BORDER | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE |
+                    ES_AUTOVSCROLL | ES_READONLY, 12, 28, 406, 232
+    LTEXT           "&Message:", IDC_CHAT_MESSAGE_LABEL, 12, 269, 46, 12
+    EDITTEXT        IDC_CHAT_MESSAGE, 60, 266, 278, 38,
+                    WS_TABSTOP | WS_VSCROLL | ES_MULTILINE |
+                    ES_AUTOVSCROLL | ES_WANTRETURN
+    DEFPUSHBUTTON   "&Send", IDC_CHAT_SEND, 344, 266, 74, 18
+    PUSHBUTTON      "Close", IDCANCEL, 344, 286, 74, 18
+    LTEXT           "Messages remain after sharing ends; save as RTF to keep them after closing.",
+                    IDC_CHAT_FOOTER, 12, 309, 320, 12
+END
+
+IDD_VERSION_HISTORY DIALOGEX 0, 0, 640, 410
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU |
+      WS_THICKFRAME | WS_MAXIMIZEBOX
+CAPTION "Version History"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "Version history", IDC_VERSION_TITLE, 12, 10, 84, 14
+    LTEXT           "Select a version to preview its author-tagged changes.",
+                    IDC_VERSION_DETAILS, 104, 10, 524, 24
+    CONTROL         "", IDC_VERSION_PREVIEW, "WordCraftRenderEditor",
+                    WS_BORDER | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE |
+                    ES_AUTOVSCROLL | ES_READONLY | ES_NOHIDESEL,
+                    12, 36, 430, 334
+    LISTBOX         IDC_VERSION_LIST, 452, 36, 176, 334,
+                    WS_BORDER | WS_TABSTOP | WS_VSCROLL |
+                    LBS_NOTIFY | LBS_NOINTEGRALHEIGHT
+    DEFPUSHBUTTON   "&Restore this version", IDC_VERSION_RESTORE,
+                    452, 378, 112, 20
+    PUSHBUTTON      "Close", IDCANCEL, 570, 378, 58, 20
+END
+
+IDD_INSERT_PROMPT DIALOGEX 0, 0, 326, 124
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Insert"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "&Value:", IDC_INSERT_PROMPT_LABEL, 12, 14, 302, 12
+    EDITTEXT        IDC_INSERT_PROMPT_EDIT, 12, 30, 302, 16,
+                    ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "", IDC_INSERT_PROMPT_HINT, 12, 52, 302, 28
+    DEFPUSHBUTTON   "Insert", IDOK, 212, 96, 48, 16
+    PUSHBUTTON      "Cancel", IDCANCEL, 266, 96, 48, 16
+END
+
+IDD_INSERT_TABLE DIALOGEX 0, 0, 238, 112
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Insert Table"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "&Rows:", -1, 12, 18, 54, 12
+    EDITTEXT        IDC_INSERT_TABLE_ROWS, 70, 16, 62, 14,
+                    ES_AUTOHSCROLL | ES_NUMBER | WS_TABSTOP
+    LTEXT           "&Columns:", -1, 12, 44, 54, 12
+    EDITTEXT        IDC_INSERT_TABLE_COLUMNS, 70, 42, 62, 14,
+                    ES_AUTOHSCROLL | ES_NUMBER | WS_TABSTOP
+    LTEXT           "Rows 1-20; columns 1-10.", -1, 12, 68, 132, 12
+    DEFPUSHBUTTON   "Insert", IDOK, 132, 86, 44, 16
+    PUSHBUTTON      "Cancel", IDCANCEL, 182, 86, 44, 16
+END
