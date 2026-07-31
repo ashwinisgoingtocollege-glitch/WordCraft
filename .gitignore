@@ -1,5 +1,12 @@
 /build/
 /build-debug/
+/build-arm64/
+/build-arm64-debug/
+/build-arm64-audit/
+/build-x64-audit/
+/recovery/
 /wordcraft.exe
 /wordcraft-debug.exe
+/wordcraft-arm64.exe
+/wordcraft-arm64-debug.exe
 /*.plist

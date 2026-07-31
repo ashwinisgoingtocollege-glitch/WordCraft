@@ -202,6 +202,61 @@ make debug
 
 This produces `wordcraft-debug.exe` in a separate `build-debug` tree, so debug and release objects never mix.
 
+For a native Windows on ARM64 build, including Snapdragon PCs, use the explicit
+LLVM target:
+
+```powershell
+make arm64
+```
+
+This produces `wordcraft-arm64.exe` and keeps its optimized objects in
+`build-arm64`; the ordinary `make` output and `build` tree are unchanged. The
+target uses `aarch64-pc-windows-msvc`, the Windows 10 ARM64 API baseline, and
+the same portable `-O2` release settings. This avoids x64 emulation at
+application runtime without restricting the binary to one Snapdragon
+generation. To build the release binary and have
+`llvm-readobj` verify that its PE/COFF machine type is native ARM64, use:
+
+```powershell
+make arm64-check
+```
+
+This check only inspects the executable header, so it can also be used after a
+cross-build on an x64 development machine. A separate debug build is available
+as:
+
+```powershell
+make arm64-debug
+```
+
+LLVM must include its AArch64 backend, and the selected Visual Studio Build
+Tools and Windows SDK installations must include their ARM64 libraries. The
+resource script and manifest are architecture-neutral, so `llvm-rc` is shared
+by the x64 and ARM64 builds. On a Windows ARM64 machine, build and run the
+native headless regression suite with:
+
+```powershell
+make arm64-test
+```
+
+Run the complete native ARM64 GUI regression suite with:
+
+```powershell
+make arm64-gui-test
+```
+
+That target builds the application and all GUI probes as ARM64 binaries in
+`build-arm64`, then points each probe at `wordcraft-arm64.exe` through the
+`WORDCRAFT_TEST_APP` environment override. It does not rename, copy over, or
+otherwise disturb the ordinary `wordcraft.exe`. The same override can be used
+when invoking an individual GUI probe; if it is absent, probes retain their
+existing `wordcraft.exe` fallback.
+
+An x64 development machine can cross-compile `make arm64`, but cannot run the
+resulting ARM64 executable or probes locally. The ARM64 targets deliberately
+use separate executables and object directories, so switching architectures
+does not require `make clean`.
+
 Run the headless Rich Edit regression probes after building:
 
 ```powershell
@@ -332,6 +387,12 @@ them, but RTF and plain-text files do not store them as current-document page
 settings.
 
 The source targets Windows 7 or newer. Windows 8 and later can use the operating system's installed spell checker for the user's locale (falling back to US English when available); Windows 7 and systems without a supported spell service retain the deliberately conservative built-in typo checks. Inline autocomplete is local and deterministic: it does not send document text to a network service. The output architecture follows the selected compiler; the default LLVM installation in this workspace produces x64 Windows binaries.
+
+Native ARM64 deployment requires Windows 10 or Windows 11 on ARM. The installed
+`clang` and `lld-link` executables in this workspace are themselves x64 and run
+under Windows emulation on this Snapdragon host, which can affect build time;
+the `make arm64` output is nevertheless a native ARM64 executable and does not
+use x64 emulation at application runtime.
 
 ## Source layout
 

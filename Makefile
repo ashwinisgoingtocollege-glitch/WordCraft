@@ -4,8 +4,19 @@ SHELL := cmd.exe
 APP ?= wordcraft.exe
 BUILD_DIR ?= build
 TOOLCHAIN ?= llvm
+LLVM_TARGET ?=
+ARM64_TARGET ?= aarch64-pc-windows-msvc
+ARM64_APP ?= wordcraft-arm64.exe
+WINDOWS_TARGET ?= 0x0601
 
-CPPFLAGS := -Iinclude -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -D_RICHEDIT_VER=0x0500
+LLVM_TARGET_FLAG :=
+ifeq ($(TOOLCHAIN),llvm)
+ifneq ($(strip $(LLVM_TARGET)),)
+LLVM_TARGET_FLAG := --target=$(LLVM_TARGET)
+endif
+endif
+
+CPPFLAGS := $(LLVM_TARGET_FLAG) -Iinclude -DUNICODE -D_UNICODE -D_WIN32_WINNT=$(WINDOWS_TARGET) -DWINVER=$(WINDOWS_TARGET) -D_RICHEDIT_VER=0x0500
 CFLAGS := -std=c11 -O2 -Wall -Wextra -Wpedantic
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Wpedantic
 LDLIBS := -lcomctl32 -lcomdlg32 -ld2d1 -lgdi32 -limm32 -lole32 -loleaut32 -luuid -lshell32 -lws2_32 -luser32 -lkernel32
@@ -22,8 +33,8 @@ else
 CC := clang
 CXX := clang++
 RC := llvm-rc
-LDFLAGS := -fuse-ld=lld -municode -mwindows
-CONSOLE_LDFLAGS := -fuse-ld=lld -municode
+LDFLAGS := $(LLVM_TARGET_FLAG) -fuse-ld=lld -municode -mwindows
+CONSOLE_LDFLAGS := $(LLVM_TARGET_FLAG) -fuse-ld=lld -municode
 RESOURCE := $(BUILD_DIR)/app.res
 RC_COMMAND = $(RC) /nologo /I include /I resources /fo $@ resources/app.rc
 endif
@@ -33,7 +44,7 @@ CXX_SOURCES := src/rendereditor.cpp
 OBJECTS := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SOURCES)) $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(CXX_SOURCES))
 RESOURCE_INPUTS := resources/app.rc resources/app.manifest resources/wordcraft.ico include/resource.h
 
-.PHONY: all clean debug test gui-test
+.PHONY: all clean debug arm64 arm64-check arm64-debug arm64-test arm64-gui-test test gui-test
 
 DEBUG_CFLAGS := -std=c11 -O0 -g -Wall -Wextra -Wpedantic
 DEBUG_CXXFLAGS := -std=c++17 -O0 -g -Wall -Wextra -Wpedantic
@@ -57,6 +68,21 @@ $(BUILD_DIR):
 
 debug:
 	$(MAKE) APP=wordcraft-debug.exe BUILD_DIR=build-debug CFLAGS="$(DEBUG_CFLAGS)" CXXFLAGS="$(DEBUG_CXXFLAGS)" all
+
+arm64:
+	$(MAKE) TOOLCHAIN=llvm LLVM_TARGET=$(ARM64_TARGET) WINDOWS_TARGET=0x0A00 APP=$(ARM64_APP) BUILD_DIR=build-arm64 all
+
+arm64-check: arm64
+	llvm-readobj --file-headers "$(ARM64_APP)" | findstr /C:"IMAGE_FILE_MACHINE_ARM64" >NUL
+
+arm64-debug:
+	$(MAKE) TOOLCHAIN=llvm LLVM_TARGET=$(ARM64_TARGET) WINDOWS_TARGET=0x0A00 APP=wordcraft-arm64-debug.exe BUILD_DIR=build-arm64-debug CFLAGS="$(DEBUG_CFLAGS)" CXXFLAGS="$(DEBUG_CXXFLAGS)" all
+
+arm64-test:
+	$(MAKE) TOOLCHAIN=llvm LLVM_TARGET=$(ARM64_TARGET) WINDOWS_TARGET=0x0A00 APP=$(ARM64_APP) BUILD_DIR=build-arm64 test
+
+arm64-gui-test:
+	set "WORDCRAFT_TEST_APP=$(ARM64_APP)"&& $(MAKE) TOOLCHAIN=llvm LLVM_TARGET=$(ARM64_TARGET) WINDOWS_TARGET=0x0A00 APP=$(ARM64_APP) BUILD_DIR=build-arm64 gui-test
 
 $(BUILD_DIR)/wrap_probe.exe: tests/wrap_probe.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< -luser32 -lkernel32
@@ -130,5 +156,9 @@ gui-test: all $(BUILD_DIR)/gui_probe.exe $(BUILD_DIR)/splash_probe.exe $(BUILD_D
 clean:
 	if exist build rmdir /S /Q build
 	if exist build-debug rmdir /S /Q build-debug
+	if exist build-arm64 rmdir /S /Q build-arm64
+	if exist build-arm64-debug rmdir /S /Q build-arm64-debug
 	if exist $(APP) del /Q $(APP)
 	if exist wordcraft-debug.exe del /Q wordcraft-debug.exe
+	if exist $(ARM64_APP) del /Q $(ARM64_APP)
+	if exist wordcraft-arm64-debug.exe del /Q wordcraft-arm64-debug.exe
