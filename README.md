@@ -121,9 +121,10 @@ WordCraft's original mark is a mischievous dog caught eating a sheet of homework
   into frame-paced animation targeting a consistent 60 fps
 - Light and dark application themes (`Ctrl+Shift+D`); dark mode keeps the document paper light so saved text colors remain accurate
 - As-you-type spelling checks using the installed Windows spell service, with a conservative built-in typo detector when that service is unavailable (including Windows 7)
-- Copilot-style inline ghost-text autocomplete based on common phrases and earlier document context; press `Tab` to accept a suggestion or `Esc` to dismiss it
+- Conservative autocorrect for common, unambiguous misspellings when a word is finished; casing is preserved, the correction is independently undoable, and mixed-case identifiers, paste, document loading, URLs, email addresses, and IME composition are left alone
+- Copilot-style inline ghost-text autocomplete based on common phrases, document vocabulary, and earlier document context; press `Tab` or `Right Arrow` to accept a suggestion, or `Esc` to dismiss it
 - Separate spelling and completion worker threads analyze immutable text snapshots so language assistance does not block typing
-- Independent **Tools** menu toggles for spelling checks and inline autocomplete
+- Independent **Tools** menu toggles for spelling checks, autocorrect, and inline autocomplete
 - Zoom levels, page-width wrapping, a live word/character count, and line/column status
 - Drag-and-drop opening and opening a document from the command line
 
@@ -266,8 +267,9 @@ make test
 The probes cover large text extraction (beyond 64K), CRLF export, Unicode RTF
 character and paragraph formatting round trips, grouped Replace All undo
 behavior, whole-word matching, the RichEdit wrapping behavior used by the paged
-layout, all 130 requested font-catalog entries, conservative typo detection,
-phrase/context completion, prefix completion, language-engine bounds checks,
+layout, all 130 requested font-catalog entries, conservative typo detection and
+case-preserving correction, phrase/context completion, prefix completion,
+language-engine bounds checks,
 advanced line breaking, multilingual text-state preservation, and Word-like
 default paragraph metrics. The paper probe verifies all 24 named presets and
 Custom, catalog dimensions and Windows paper identifiers, size matching,
@@ -286,8 +288,11 @@ page visibility, selection preservation while scrolling, high-resolution wheel
 input, smooth-scroll frame pacing and event coalescing, forward and reverse
 cross-page selection state, caret-to-page tracking, dark-mode toggling without
 document or typography changes, both worker threads, asynchronous spell/completion results,
-Tab acceptance, one-step completion undo, feature toggles, ordinary Tab
-behavior, UTF-8 saving, and clean shutdown.
+boundary-triggered autocorrect and its one-step undo, Tab and Right Arrow
+completion acceptance, one-step completion undo, feature toggles, ordinary
+Tab behavior, UTF-8 saving, and clean shutdown.
+Run `make assist-gui-test` for the focused autocorrect and inline-completion
+interaction probe without running the rest of the GUI suite.
 The Home-ribbon portion verifies all five group boundaries, every command's
 group assignment, keyboard entry and traversal, full/gallery, compact/combo,
 and minimum-width collapsed layouts, font growth and shrinking, scripts,
@@ -386,7 +391,7 @@ the active choices while WordCraft is running, and live sessions synchronize
 them, but RTF and plain-text files do not store them as current-document page
 settings.
 
-The source targets Windows 7 or newer. Windows 8 and later can use the operating system's installed spell checker for the user's locale (falling back to US English when available); Windows 7 and systems without a supported spell service retain the deliberately conservative built-in typo checks. Inline autocomplete is local and deterministic: it does not send document text to a network service. The output architecture follows the selected compiler; the default LLVM installation in this workspace produces x64 Windows binaries.
+The source targets Windows 7 or newer. Windows 8 and later can use the operating system's installed spell checker for the user's locale (falling back to US English when available); Windows 7 and systems without a supported spell service retain the deliberately conservative built-in typo checks. Autocorrect uses only a high-confidence built-in replacement table; arbitrary spell-service suggestions are never applied automatically. Inline autocomplete is local and deterministic: it does not send document text to a network service. The output architecture follows the selected compiler; the default LLVM installation in this workspace produces x64 Windows binaries.
 
 Native ARM64 deployment requires Windows 10 or Windows 11 on ARM. The installed
 `clang` and `lld-link` executables in this workspace are themselves x64 and run
@@ -410,13 +415,14 @@ use x64 emulation at application runtime.
 - `src/pageview.c` — paper-page layout, scrolling, navigation, and pagination
 - `src/paper.c` — named paper catalog, Custom validation, and printer settings
 - `include/paper.h` — paper-size model and catalog interface
-- `src/assist.c` — background spelling/completion workers and UI-thread overlays
-- `src/language.c` — local typo fallback and deterministic completion engine
+- `src/assist.c` — autocorrect integration, background spelling/completion workers, and UI-thread overlays
+- `src/language.c` — local typo correction/fallback and deterministic completion engine
 - `src/live.c` — authenticated, framed, host-authoritative WinSock transport
 - `src/liveui.c` — session dialog, document bridge, debounce, and status UI
 - `src/dialogs.c` — find/replace, date/time, and About dialogs
 - `src/printing.c` — page setup and paginated printing
-- `tests/language_probe.c` — typo and completion engine regression coverage
+- `tests/language_probe.c` — typo correction and completion engine regression coverage
+- `tests/assist_gui_probe.c` — focused autocorrect and ghost-text interaction coverage
 - `tests/font_probe.c` — requested catalog and font-list regression coverage
 - `tests/comment_probe.c` — tracked-anchor and comment-metadata regression coverage
 - `tests/paper_probe.c` — paper catalog, validation, and `DEVMODE` coverage

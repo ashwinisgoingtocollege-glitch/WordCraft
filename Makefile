@@ -44,7 +44,7 @@ CXX_SOURCES := src/rendereditor.cpp
 OBJECTS := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SOURCES)) $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(CXX_SOURCES))
 RESOURCE_INPUTS := resources/app.rc resources/app.manifest resources/wordcraft.ico include/resource.h
 
-.PHONY: all clean debug arm64 arm64-check arm64-debug arm64-test arm64-gui-test test gui-test
+.PHONY: all clean debug arm64 arm64-check arm64-debug arm64-test arm64-gui-test test gui-test assist-gui-test printing-gui-test
 
 DEBUG_CFLAGS := -std=c11 -O0 -g -Wall -Wextra -Wpedantic
 DEBUG_CXXFLAGS := -std=c++17 -O0 -g -Wall -Wextra -Wpedantic
@@ -133,6 +133,9 @@ test: all $(BUILD_DIR)/wrap_probe.exe $(BUILD_DIR)/text_probe.exe $(BUILD_DIR)/r
 $(BUILD_DIR)/gui_probe.exe: tests/gui_probe.c include/editor.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -municode -o $@ $< -lgdi32 -luser32 -lkernel32
 
+$(BUILD_DIR)/assist_gui_probe.exe: tests/assist_gui_probe.c include/editor.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -municode -o $@ $< -lgdi32 -luser32 -lkernel32
+
 $(BUILD_DIR)/splash_probe.exe: tests/splash_probe.c include/editor.h include/splash.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -municode -o $@ $< -lgdi32 -luser32 -lkernel32
 
@@ -145,13 +148,23 @@ $(BUILD_DIR)/history_gui_probe.exe: tests/history_gui_probe.c include/editor.h |
 $(BUILD_DIR)/draw_canvas_gui_probe.exe: tests/draw_canvas_gui_probe.c include/editor.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -municode -o $@ $< -lgdi32 -lole32 -luuid -luser32 -lkernel32
 
-gui-test: all $(BUILD_DIR)/gui_probe.exe $(BUILD_DIR)/splash_probe.exe $(BUILD_DIR)/live_gui_probe.exe $(BUILD_DIR)/history_gui_probe.exe $(BUILD_DIR)/draw_canvas_gui_probe.exe
+$(BUILD_DIR)/printing_gui_probe.exe: tests/printing_gui_probe.c include/editor.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -municode -o $@ $< -lgdi32 -luser32 -lkernel32
+
+printing-gui-test: all $(BUILD_DIR)/printing_gui_probe.exe
+	$(BUILD_DIR)\printing_gui_probe.exe
+
+assist-gui-test: all $(BUILD_DIR)/assist_gui_probe.exe
+	$(BUILD_DIR)\assist_gui_probe.exe
+
+gui-test: all $(BUILD_DIR)/gui_probe.exe $(BUILD_DIR)/splash_probe.exe $(BUILD_DIR)/live_gui_probe.exe $(BUILD_DIR)/history_gui_probe.exe $(BUILD_DIR)/draw_canvas_gui_probe.exe $(BUILD_DIR)/printing_gui_probe.exe
 	$(BUILD_DIR)\gui_probe.exe
 	$(BUILD_DIR)\splash_probe.exe
 	set WORDCRAFT_DISABLE_D2D=1&& $(BUILD_DIR)\splash_probe.exe
 	$(BUILD_DIR)\live_gui_probe.exe
 	$(BUILD_DIR)\history_gui_probe.exe
 	$(BUILD_DIR)\draw_canvas_gui_probe.exe
+	$(BUILD_DIR)\printing_gui_probe.exe
 
 clean:
 	if exist build rmdir /S /Q build
